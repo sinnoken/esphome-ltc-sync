@@ -44,6 +44,8 @@
 
 ## 之後可能做
 
+- 接線圖改成白底（`tools/draw_schematics.py`：SVG / PNG 加白色背景，深色模式下才看得清楚）；下次改電路時一起做
+
 - 23.976 fps
 - 讓上線中的 node 回報其他 node 的狀態（目前省電中的 node 不發射，所以看不到）
 - ESP Web Tools 網頁一鍵燒錄頁面（類似 Athom）
