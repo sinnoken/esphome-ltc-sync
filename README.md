@@ -4,17 +4,7 @@
 
 > ⚠️ 狀態：純省電版、混合版（不含 HA API 的組態）、ESP-NOW node 與 master 都能編譯（ESP-IDF 5.5.6 / ESPHome 2026.10）；含 API 的完整混合版與 online 版只通過設定檢查（建置環境連不到 Espressif / PlatformIO 套件庫），核心演算法有主機端測試與 24 小時閉迴路模擬，但**還沒有在實機上驗證過**。請先照 [docs/verify.md](docs/verify.md) 用兩顆 node 實測，再拿去正式拍攝。
 
-```
- 手機熱點（2.4 GHz）           ← 每 102.4 ms 一個 beacon，內含硬體 TSF 時間戳
-      │  只在對時視窗被動收聽（不連線、不需密碼）
-      ▼
- ┌──────────┐  ┌──────────┐  ┌──────────┐
- │ node 相機1│  │ node 相機2│  │ node 錄音機│   XIAO ESP32C3 + LiPo
- │  RMT→LTC │  │  RMT→LTC │  │  RMT→LTC │   其餘時間無線電關閉，自己跑
- └────┬─────┘  └────┬─────┘  └────┬─────┘
-      ▼ 衰減器      ▼            ▼
-   相機 mic in    相機 mic in    錄音機空軌        → 後製用 LTC 自動對齊
-```
+![LTC 同步架構：手機熱點 beacon → 各 node（RMT 產生 LTC）→ 相機 mic in / 錄音機空軌 → 後製用 LTC 自動對齊](docs/img/architecture.png)
 
 ## 特色
 
