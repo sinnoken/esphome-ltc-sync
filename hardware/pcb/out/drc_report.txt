@@ -1,0 +1,14 @@
+DRC: 0 error(s); clearance >= 0.2 mm, pour clearance 0.3 mm
+NET BAT+        ok                   pads: J3.1, SW1.1
+NET BSENSE      ok                   pads: U1.2, R8.2, R9.1
+NET GND         ok                   pads: U1.13, U1.22, J1.S, J2.S, J3.2, R3.1, C2.1, R9.2, R5.1, D1.1
+NET LED_A       ok                   pads: R7.2, D1.2
+NET LED_DRV     ok                   pads: U1.8, R7.1
+NET LTC_LINE    ok                   pads: U1.5, R2.2
+NET LTC_MIC     ok                   pads: U1.4, R1.2
+NET NODE        ok                   pads: R1.1, R2.1, R3.2, C2.2, C1.2
+NET RING        ok                   pads: J1.R, J2.R
+NET TIP_OUT     ok                   pads: J1.T, C1.1
+NET VBAT        ok                   pads: U1.21, SW1.2, R8.1
+NET VBUS        ok                   pads: U1.14, R4.2
+NET VBUS_SENSE  ok                   pads: U1.11, R4.1, R5.2

@@ -32,10 +32,10 @@ substitutions:
   start_timecode: "00:00:00:00"
   output_offset_us: "0"
   output_level: mic             # mic (cameras) or line (recorders); saved per node
-  # Hardware (Seeed XIAO ESP32C3)
+  # Hardware (Seeed XIAO ESP32C3 on the carrier PCB, hardware/README.md)
   ltc_pin: GPIO5                # D3: mic-level tap (220k)
   line_pin: GPIO6               # D4: line-level tap (4.7k), see docs/hardware.md
-  led_pin: GPIO4                # D2, "locked" LED via 330 ohm
+  led_pin: GPIO20               # D7, "locked" LED (carrier PCB v0.3, hardware/pcb)
   # Network
   wifi_power_save: light
   timezone: ""
@@ -190,10 +190,11 @@ binary_sensor:
   - platform: status
     name: "Status"
     entity_category: diagnostic
-  # Optional "charging" sense: XIAO 5V pin -> 100k -> GPIO3 (D1) -> 100k -> GND.
+  # USB power present (carrier PCB: 5V -> 100k -> GPIO10 -> 100k -> GND).
   # While USB power is present the node stays online (OTA, HA).
+  # Uncomment when using the carrier PCB (or the same divider on GPIO10).
   # - platform: gpio
-  #   pin: GPIO3
+  #   pin: GPIO10
   #   name: "USB Power"
   #   entity_category: diagnostic
   #   on_press:
@@ -233,6 +234,14 @@ button:
     entity_category: config
 
 sensor:
+  - platform: adc                # battery (carrier PCB: VBAT/2 on GPIO3)
+    pin: GPIO3
+    name: "Battery Voltage"
+    attenuation: 12db
+    update_interval: 60s
+    filters:
+      - multiply: 2.0
+    entity_category: diagnostic
   - platform: template
     name: "Settings Revision"
     icon: mdi:counter

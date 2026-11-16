@@ -20,10 +20,10 @@ substitutions:
   output_offset_us: "0"         # constant correction, see docs/verify.md
   output_level: mic             # mic (cameras) or line (recorders); saved per node
   resync_interval: "1min"
-  # Hardware (Seeed XIAO ESP32C3)
+  # Hardware (Seeed XIAO ESP32C3 on the carrier PCB, hardware/README.md)
   ltc_pin: GPIO5                # D3: mic-level tap (220k)
   line_pin: GPIO6               # D4: line-level tap (4.7k), see docs/hardware.md
-  led_pin: GPIO4                # D2, "locked" LED via 330 ohm
+  led_pin: GPIO20               # D7, "locked" LED (carrier PCB v0.3, hardware/pcb)
   # Network
   wifi_power_save: light        # none = best timing (+~50 mA), light = longer battery life
   wifi_fast_connect: "false"
@@ -182,6 +182,14 @@ button:
     entity_category: config
 
 sensor:
+  - platform: adc                # battery (carrier PCB: VBAT/2 on GPIO3)
+    pin: GPIO3
+    name: "Battery Voltage"
+    attenuation: 12db
+    update_interval: 60s
+    filters:
+      - multiply: 2.0
+    entity_category: diagnostic
   - platform: template
     name: "Settings Revision"
     icon: mdi:counter

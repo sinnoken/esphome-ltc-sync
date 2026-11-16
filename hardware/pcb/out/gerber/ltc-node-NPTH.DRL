@@ -1,0 +1,15 @@
+M48
+; esphome-ltc-sync LTC node carrier
+; #@! TF.FileFunction,NonPlated,1,2,NPTH
+FMAT,2
+METRIC
+T1C2.200
+%
+G90
+G05
+T1
+X2.500Y2.000
+X2.500Y32.000
+X47.500Y2.000
+X47.500Y32.000
+M30

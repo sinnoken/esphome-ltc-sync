@@ -70,13 +70,14 @@ GPIO 輸出 0 / 3.3 V 方波。相機要 mic level，錄音機要 line level，�
 - 必須共用電源時，在音訊路徑串一顆 1:1 音訊隔離變壓器。
 - 天線不要被相機機身或金屬兔籠擋住；XIAO 的 U.FL 天線可以貼在兔籠外側。
 
-## 腳位（範例 YAML）
+## 腳位（範例 YAML，與 [底板 PCB](../hardware/README.md) 一致）
 
 | XIAO 腳位 | GPIO | 用途 |
 |---|---|---|
 | D3 | GPIO5 | LTC 輸出（mic 抽頭，220 kΩ） |
 | D4 | GPIO6 | LTC 輸出（line 抽頭，4.7 kΩ） |
-| D2 | GPIO4 | 鎖定 LED（可選，經 330 Ω 接 LED 到 GND） |
-| D1 | GPIO3 | PPS 驗證脈衝（可選） |
+| D7 | GPIO20 | 鎖定 LED（經 330 Ω 接 LED 到 GND） |
+| D1 | GPIO3 | 電池電壓（VBAT ÷ 2，ADC） |
+| D10 | GPIO10 | USB 供電偵測（5V ÷ 2） |
 
 避免使用 strapping pin（C3 的 GPIO2、8、9）當 LTC 輸出。
