@@ -174,7 +174,7 @@ Lambda API：`set_fps("25")`、`set_output_level("line")`、`jam()`、`sync_now(
 - [docs/hardware.md](docs/hardware.md)：板子、電池、接線與電平
 - [docs/accuracy.md](docs/accuracy.md)：原理、誤差來源、模擬假設與結果
 - [docs/verify.md](docs/verify.md)：上線前的實測步驟（`ltc_compare.py`）
-- [hardware/README.md](hardware/README.md)：底板 PCB（JLCPCB 下單檔）與 3D 列印外殼
+- [hardware/README.md](hardware/README.md)：底板 PCB（JLCPCB 下單檔）與 3D 列印外殼（選用，功能測試後再決定）
 - [PROGRESS.md](PROGRESS.md)：目前進度、功能測試清單、待辦與設計決策
 
 ## 開發
