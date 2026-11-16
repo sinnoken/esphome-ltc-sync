@@ -162,12 +162,12 @@ def main():
 
 
 def render(b, l):
-    """Painter's-algorithm render (sorted triangles), no OpenGL needed."""
+    """Software z-buffer render (no OpenGL): per-pixel depth test, headlight
+    shading, and outlines where depth or surface normal changes."""
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.collections import PolyCollection
 
     def view_matrix(elev, azim):
         e, a = np.radians(elev), np.radians(azim)
@@ -175,43 +175,77 @@ def render(b, l):
         rx = np.array([[1, 0, 0], [0, np.cos(e), -np.sin(e)], [0, np.sin(e), np.cos(e)]])
         return rx @ rz
 
-    def draw(ax, items, elev, azim):
+    def raster(items, elev, azim, px=8.0):
         R = view_matrix(elev, azim)
-        polys, colors, depth = [], [], []
-        light = np.array([0.3, -0.4, 0.85])
-        light /= np.linalg.norm(light)
+        tris, cols, nrm = [], [], []
         for m, color, dz in items:
-            v = np.asarray(m.vertices).copy()
+            v = np.asarray(m.vertices, float).copy()
             v[:, 2] += dz
-            f = np.asarray(m.faces)
-            tri = v[f]
-            n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+            t = v[np.asarray(m.faces)] @ R.T  # camera: x right, y up, z to viewer
+            n = np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0])
             n /= np.linalg.norm(n, axis=1)[:, None] + 1e-12
-            vt = tri @ R.T  # camera space: x right, y up, z towards viewer
-            nt = n @ R.T
-            visible = nt[:, 2] > 0
-            shade = np.clip(n @ light, 0, 1) * 0.65 + 0.35
-            rgb = np.array(matplotlib.colors.to_rgb(color))
-            for t, sh, d in zip(vt[visible], shade[visible], vt[visible][:, :, 2].mean(axis=1)):
-                polys.append(t[:, :2])
-                colors.append(rgb * sh)
-                depth.append(d)
-        order = np.argsort(depth)
-        ax.add_collection(PolyCollection([polys[i] for i in order], facecolors=[colors[i] for i in order], edgecolors="none"))
-        allp = np.concatenate(polys)
-        ax.set_xlim(allp[:, 0].min() - 2, allp[:, 0].max() + 2)
-        ax.set_ylim(allp[:, 1].min() - 2, allp[:, 1].max() + 2)
-        ax.set_aspect("equal")
-        ax.axis("off")
+            keep = n[:, 2] > 1e-6  # back-face cull
+            tris.append(t[keep]); nrm.append(n[keep])
+            cols.append(np.tile(matplotlib.colors.to_rgb(color), (keep.sum(), 1)))
+        T, N, C = np.concatenate(tris), np.concatenate(nrm), np.concatenate(cols)
+        lo = T[:, :, :2].reshape(-1, 2).min(0) - 3
+        hi = T[:, :, :2].reshape(-1, 2).max(0) + 3
+        W, H = (np.ceil((hi - lo) * px)).astype(int)
+        S = (T[:, :, :2] - lo) * px
+        S[:, :, 1] = H - S[:, :, 1]
+        zbuf = np.full((H, W), -np.inf)
+        fid = np.full((H, W), -1)
+        for i, (s, z) in enumerate(zip(S, T[:, :, 2])):
+            x0, y0 = np.floor(s.min(0)).astype(int)
+            x1, y1 = np.ceil(s.max(0)).astype(int)
+            x0, y0 = max(x0, 0), max(y0, 0)
+            x1, y1 = min(x1, W - 1), min(y1, H - 1)
+            if x1 < x0 or y1 < y0:
+                continue
+            xs, ys = np.meshgrid(np.arange(x0, x1 + 1) + 0.5, np.arange(y0, y1 + 1) + 0.5)
+            (ax_, ay), (bx, by), (cx, cy) = s
+            den = (by - cy) * (ax_ - cx) + (cx - bx) * (ay - cy)
+            if abs(den) < 1e-12:
+                continue
+            w0 = ((by - cy) * (xs - cx) + (cx - bx) * (ys - cy)) / den
+            w1 = ((cy - ay) * (xs - cx) + (ax_ - cx) * (ys - cy)) / den
+            w2 = 1 - w0 - w1
+            inside = (w0 >= -1e-4) & (w1 >= -1e-4) & (w2 >= -1e-4)
+            zz = w0 * z[0] + w1 * z[1] + w2 * z[2]
+            sub = zbuf[y0:y1 + 1, x0:x1 + 1]
+            win = inside & (zz > sub)
+            sub[win] = zz[win]
+            fid[y0:y1 + 1, x0:x1 + 1][win] = i
+        img = np.ones((H, W, 3))
+        hit = fid >= 0
+        light = np.array([-0.35, 0.45, 0.82]); light /= np.linalg.norm(light)
+        shade = 0.38 + 0.62 * np.clip(N @ light, 0, 1)
+        img[hit] = C[fid[hit]] * shade[fid[hit]][:, None]
+        # outlines: silhouette, depth steps and creases (normal change > ~25 deg)
+        edge = np.zeros_like(hit)
+        nb = np.where(hit[..., None], N[np.clip(fid, 0, None)], 0)
+        zb = np.where(hit, zbuf, 0.0)
+        for dy, dx in ((0, 1), (1, 0)):
+            a = (slice(0, H - dy), slice(0, W - dx)); b_ = (slice(dy, H), slice(dx, W))
+            e = hit[a] != hit[b_]
+            both = hit[a] & hit[b_]
+            e |= both & (np.abs(zb[a] - zb[b_]) > 0.6)
+            e |= both & ((nb[a] * nb[b_]).sum(-1) < 0.9)
+            edge[a] |= e
+        img[edge] = img[edge] * 0.35
+        return img
 
-    # rotate the camera: elevation tilts the scene towards the viewer
+    views = [
+        ("assembled, lid lifted (jacks left, USB-C right)",
+         [(b, "#4a6fa5", 0), (l, "#d9a441", 14)], -62, -35),
+        ("base from below (cold-shoe foot)", [(b, "#4a6fa5", 0)], 118, -35),
+        ("lid from below (PCB clamp posts)", [(l, "#d9a441", 0)], 118, -35),
+    ]
     fig, axes = plt.subplots(1, 3, figsize=(15, 5), dpi=150)
-    draw(axes[0], [(b, "#4a6fa5", 0), (l, "#d9a441", 14)], -62, -35)
-    axes[0].set_title("assembled, lid lifted (jack side left, USB-C right)")
-    draw(axes[1], [(b, "#4a6fa5", 0)], -62, -35)
-    axes[1].set_title("base with cold-shoe foot")
-    draw(axes[2], [(l, "#d9a441", 0)], 118, -35)
-    axes[2].set_title("lid from below (PCB clamp posts)")
+    for ax, (title, items, el, az) in zip(axes, views):
+        ax.imshow(raster(items, el, az), interpolation="lanczos")
+        ax.set_title(title)
+        ax.axis("off")
     fig.tight_layout()
     fig.savefig(OUT / "preview.png", facecolor="white")
 

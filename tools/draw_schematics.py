@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Draws the wiring diagrams in docs/img/ (SVG + PNG).
 
-    pip install schemdraw matplotlib
+    pip install schemdraw matplotlib pillow
     python3 tools/draw_schematics.py
 """
 
@@ -52,7 +52,7 @@ def output_stage(d, x0=0.0, y0=0.0, tip_label="Tip → camera / recorder", groun
 def draw_output(path, backend):
     schemdraw.use(backend)
     with schemdraw.Drawing(show=False) as d:
-        d.config(unit=2.4, fontsize=11)
+        d.config(unit=2.4, fontsize=11, bgcolor="white")
         n, tip, gnd = output_stage(d)
         # sleeve
         s = elm.Dot(open=True).at((tip.center[0], gnd.center[1])).label("Sleeve (GND)", loc="right")
@@ -70,7 +70,7 @@ def draw_output(path, backend):
 def draw_passthrough(path, backend):
     schemdraw.use(backend)
     with schemdraw.Drawing(show=False) as d:
-        d.config(unit=2.4, fontsize=11)
+        d.config(unit=2.4, fontsize=11, bgcolor="white")
         n, tip, gnd = output_stage(d, x0=0.0, y0=0.0, tip_label="Tip  (OUT jack)", ground=False)
         xo = tip.center[0]
         # output jack ring / sleeve, input jack on the far left
@@ -94,11 +94,22 @@ def draw_passthrough(path, backend):
         d.save(str(path), dpi=200) if backend == "matplotlib" else d.save(str(path))
 
 
+def flatten_white(path):
+    """schemdraw's matplotlib backend saves a transparent PNG; put it on white
+    so it stays readable in dark mode."""
+    from PIL import Image
+
+    im = Image.open(path).convert("RGBA")
+    bg = Image.new("RGBA", im.size, "white")
+    Image.alpha_composite(bg, im).convert("RGB").save(path)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     for name, fn in (("ltc-output", draw_output), ("mic-passthrough", draw_passthrough)):
         fn(OUT / f"{name}.svg", "svg")
         fn(OUT / f"{name}.png", "matplotlib")
+        flatten_white(OUT / f"{name}.png")
         print("wrote", OUT / f"{name}.svg", OUT / f"{name}.png")
 
 
