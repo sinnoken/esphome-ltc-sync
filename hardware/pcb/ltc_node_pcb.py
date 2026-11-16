@@ -39,7 +39,7 @@ POUR_CLEARANCE = 0.3
 SIGNAL_W, POWER_W = 0.25, 0.4
 VIA_DRILL, VIA_PAD = 0.3, 0.6
 MASK_EXP = 0.05
-REVISION = "v0.3"
+REVISION = "v0.4"
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +156,13 @@ for i in range(7):
     XIAO_PADS.append((str(1 + i), 0.835, -18.12 + 2.54 * i, 2.75, 2.0, "roundrect", False, None, None, False))
 for i in range(7):
     XIAO_PADS.append((str(8 + i), 17.0, -2.88 - 2.54 * i, 2.75, 2.0, "roundrect", False, None, None, False))
+# The module's BAT+/BAT- pads sit underneath it and cannot be reached with an
+# iron. Plated through-holes in the carrier pads let you solder them from the
+# back (Seeed forum thread 267939: works when the hole is kept small; an oversize
+# 1.75 x 0.75 mm slot let the solder run past the pad). 1.0 mm drill, 0.3 mm ring.
 XIAO_PADS += [
-    ("21", 4.445, -10.882, 2.5, 1.1, "roundrect", False, None, None, False),  # VBAT (bottom pad of the module)
-    ("22", 4.445, -12.787, 2.5, 1.1, "roundrect", False, None, None, False),  # GND
+    ("21", 4.445, -10.882, 2.5, 1.6, "roundrect", True, 1.0, None, False),  # VBAT (BAT+ pad under the module)
+    ("22", 4.445, -12.787, 2.5, 1.6, "roundrect", True, 1.0, None, False),  # GND (BAT- pad)
 ]
 # CUI SJ1-3533NG (KiCad Connector_Audio:Jack_3.5mm_CUI_SJ1-3533NG_Horizontal)
 JACK_PADS = [
@@ -338,7 +342,22 @@ def pour(layer):
     # no copper under the XIAO's own bottom pads 15-20 / antenna side on top
     if layer == "top":
         keep_out.append(box(42.0, 14.4, 49.6, 19.6))
-    p = area.difference(unary_union(keep_out))
+    # thermal relief on GND through-hole pads: a 0.3 mm gap with four 0.4 mm
+    # spokes, so the pour does not soak up the iron's heat (the XIAO BAT- pad
+    # is soldered from the back through its hole)
+    reliefs, spokes = [], []
+    for pd in ALL_PADS:
+        if pd.net == "GND" and pd.tht and layer in pad_layers(pd):
+            g = pd.geom()
+            reliefs.append(g.buffer(POUR_CLEARANCE, quad_segs=8))
+            reach = g.buffer(POUR_CLEARANCE + 0.2)
+            cross = unary_union([box(pd.x - 0.2, pd.y - 5, pd.x + 0.2, pd.y + 5),
+                                 box(pd.x - 5, pd.y - 0.2, pd.x + 5, pd.y + 0.2)])
+            spokes.append(cross.intersection(reach))
+    blocked = unary_union(keep_out)
+    p = area.difference(unary_union(keep_out + reliefs))
+    if spokes:
+        p = p.union(unary_union(spokes).intersection(area).difference(blocked))
     gnd = unary_union([g for net, g in features(layer) if net == "GND"])
     polys = list(p.geoms) if isinstance(p, MultiPolygon) else [p]
     kept = [q for q in polys if q.intersects(gnd) and q.area > 1.0]
@@ -624,7 +643,7 @@ def write_bom_cpl():
         w.writerow(["Designator", "Part", "MPN", "LCSC", "Qty", "Note"])
         for p in parts:
             if not p.smt:
-                note = {"U1": "solder castellated edge + bottom VBAT/GND pads (hot air or through the castellations)",
+                note = {"U1": "solder BAT+/BAT- from the back through the plated holes, then the castellated edge",
                         "J1": "3.5 mm out to camera", "J2": "3.5 mm in from microphone",
                         "J3": "check the battery's +/- against the '+' mark before plugging in",
                         "SW1": "charging needs the switch ON"}.get(p.ref, "")
