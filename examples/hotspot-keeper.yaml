@@ -1,0 +1,18 @@
+# Optional helper for iPhone hotspots: an ESP32 that simply stays connected,
+# so the phone keeps the hotspot visible all day. Power it from a USB power
+# bank. It does not take part in timing at all.
+esphome:
+  name: hotspot-keeper
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+
+wifi:
+  ssid: !secret hotspot_ssid
+  password: !secret hotspot_password
+  power_save_mode: light   # stay associated, use little power
+  reboot_timeout: 0s       # never reboot when the hotspot is gone, just retry
