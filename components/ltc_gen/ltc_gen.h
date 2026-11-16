@@ -40,7 +40,9 @@ namespace ltc_gen {
 
 enum class Role : uint8_t { NODE = 0, MASTER = 1 };
 // Where a node gets its time from.
-enum class Source : uint8_t { HOTSPOT = 0, ESPNOW = 1 };
+// WIFI: the node stays associated through ESPHome's wifi component and reads
+// the AP's TSF directly (normal ESPHome device: API, OTA, entities).
+enum class Source : uint8_t { HOTSPOT = 0, ESPNOW = 1, WIFI = 2 };
 
 // Everything the real-time task receives goes through one queue so it can
 // block on a single object.
@@ -202,6 +204,7 @@ class LtcGen : public Component {
   int window_result_{0};  // 0 pending, 1 ok, -1 failed
   ltc_core::Rate shared_rate_{ltc_core::Rate::FPS_30};
   int64_t shared_origin_{0};
+  int64_t base_origin_{0};  // origin from start_timecode, kept in µs across fps changes
   uint32_t session_{0};
   uint32_t seq_{0};
   uint32_t last_sent_seq_{0};
@@ -221,6 +224,8 @@ class LtcGen : public Component {
   uint32_t last_publish_ms_{0};
   uint32_t last_temp_ms_{0};
   uint32_t last_save_ms_{0};
+  uint32_t last_tsf_ms_{0};
+  void sample_tsf_();
   ESPPreferenceObject pref_;
 
   static LtcGen *instance_;

@@ -4,3 +4,4 @@ examples/.esphome/
 examples/secrets.yaml
 __pycache__/
 *.wav
+.esphome/

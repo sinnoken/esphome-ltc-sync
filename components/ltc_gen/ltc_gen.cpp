@@ -96,10 +96,11 @@ void LtcGen::setup() {
 
   // --- master timebase ---
   shared_rate_ = rate_;
-  shared_origin_ = -(int64_t) llround((double) start_frames_ * ltc_core::frame_period_us(rate_));
+  base_origin_ = -(int64_t) llround((double) start_frames_ * ltc_core::frame_period_us(rate_));
+  shared_origin_ = base_origin_;
   session_ = esp_random();
-  if (role_ == Role::MASTER || source_ == Source::HOTSPOT) {
-    // master: its own clock; hotspot node: timecode = hotspot TSF + start_timecode
+  if (role_ == Role::MASTER || source_ != Source::ESPNOW) {
+    // master: its own clock; hotspot / wifi node: timecode = AP TSF + start_timecode
     Event e = {};
     e.type = Event::TIMEBASE;
     e.local_us = shared_origin_ + output_offset_us_;
@@ -119,7 +120,7 @@ void LtcGen::setup() {
 #endif
 
   // --- radio ---
-  radio_init_();
+  if (!(role_ == Role::NODE && source_ == Source::WIFI)) radio_init_();
   if (role_ == Role::MASTER) {
     radio_on_();
     esp_timer_create_args_t targs = {};
@@ -142,6 +143,8 @@ void LtcGen::dump_config() {
   if (role_ == Role::NODE) {
     if (source_ == Source::HOTSPOT) {
       ESP_LOGCONFIG(TAG, "  Source: phone hotspot '%s'", hotspot_ssid_.c_str());
+    } else if (source_ == Source::WIFI) {
+      ESP_LOGCONFIG(TAG, "  Source: TSF of the connected access point");
     } else {
       ESP_LOGCONFIG(TAG, "  Source: ESP-NOW master");
     }
@@ -177,6 +180,10 @@ void LtcGen::radio_init_() {
 }
 
 void LtcGen::radio_on_() {
+  if (role_ == Role::NODE && source_ == Source::WIFI) {
+    radio_on_flag_ = true;  // the wifi component owns the radio; "on" = sampling TSF
+    return;
+  }
   if (!radio_ready_ || radio_on_flag_) return;
   if (own_wifi_) {
     esp_wifi_start();
@@ -222,6 +229,10 @@ void LtcGen::radio_on_() {
 
 void LtcGen::radio_off_() {
   if (!radio_on_flag_) return;
+  if (role_ == Role::NODE && source_ == Source::WIFI) {
+    radio_on_flag_ = false;
+    return;
+  }
   if (role_ == Role::NODE && source_ == Source::HOTSPOT) {
     esp_wifi_set_promiscuous(false);
     if (own_wifi_) esp_wifi_stop();
@@ -392,7 +403,7 @@ void LtcGen::task_() {
       streaming_ = false;
       engine_.stop();
     }
-    bool have_timebase = role_ == Role::MASTER || source_ == Source::HOTSPOT || pairer_.have_info();
+    bool have_timebase = role_ == Role::MASTER || source_ != Source::ESPNOW || pairer_.have_info();
     if (!streaming_ && have_timebase && engine_.clock().valid()) start_stream_();
     if (streaming_ && !engine_.restart_pending()) {
       while (engine_.in_flight() < engine_.depth()) queue_frame_();
@@ -455,6 +466,10 @@ void LtcGen::queue_frame_() {
 void LtcGen::loop() {
   uint32_t now = millis();
   if (role_ == Role::NODE) node_schedule_();
+  if (role_ == Role::NODE && source_ == Source::WIFI && radio_on_flag_ && now - last_tsf_ms_ >= 100) {
+    last_tsf_ms_ = now;
+    sample_tsf_();
+  }
   if (role_ == Role::MASTER) master_timebase_();
   if (now - last_temp_ms_ >= TEMP_PERIOD_MS) {
     last_temp_ms_ = now;
@@ -547,6 +562,21 @@ void LtcGen::node_schedule_() {
   }
 }
 
+// Associated station: the TSF timer is disciplined to the AP's beacons by the
+// Wi-Fi hardware. Read it between two local timestamps; discard the pair if
+// we were preempted in between.
+void LtcGen::sample_tsf_() {
+  int64_t t1 = esp_timer_get_time();
+  int64_t tsf = esp_wifi_get_tsf_time(WIFI_IF_STA);
+  int64_t t2 = esp_timer_get_time();
+  if (tsf <= 0 || t2 - t1 > 50) return;
+  Event e = {};
+  e.type = Event::TSF_SAMPLE;
+  e.local_us = (t1 + t2) / 2;
+  e.aux = tsf;
+  post_(e);
+}
+
 void LtcGen::master_timebase_() {
 #ifdef LTC_GEN_USE_TIME
   if (time_anchored_ || time_ == nullptr || !time_->now().is_valid()) return;
@@ -583,7 +613,7 @@ void LtcGen::jam() {
 #endif
   int64_t net = esp_timer_get_time();
   portENTER_CRITICAL(&lock_);
-  shared_origin_ = net - (int64_t) llround((double) start_frames_ * ltc_core::frame_period_us(shared_rate_));
+  shared_origin_ = net + base_origin_;
   session_ = esp_random();
   Rate r = shared_rate_;
   int64_t o = shared_origin_;
@@ -608,9 +638,10 @@ bool LtcGen::set_fps(const std::string &fps) {
   else
     return false;
   rate_ = r;
-  if (role_ == Role::MASTER) {
+  if (role_ == Role::MASTER || source_ != Source::ESPNOW) {
     portENTER_CRITICAL(&lock_);
-    // keep the time of day: origin is a time, independent of the rate
+    // the origin is a point in time, independent of the rate, so every node
+    // that switches to the same fps ends up with the same labels
     shared_rate_ = r;
     int64_t o = shared_origin_;
     portEXIT_CRITICAL(&lock_);
@@ -681,7 +712,9 @@ void LtcGen::publish_() {
     if (role_ == Role::MASTER)
       s = "master";
     else if (!st.clock_valid)
-      s = source_ == Source::HOTSPOT ? "waiting for hotspot" : "waiting for master";
+      s = source_ == Source::ESPNOW ? "waiting for master" : (source_ == Source::WIFI ? "waiting for wifi" : "waiting for hotspot");
+    else if (source_ == Source::WIFI)
+      s = synced ? "wifi (TSF)" : "wifi lost, free-run";
     else if (radio_on_flag_)
       s = "syncing";
     else {

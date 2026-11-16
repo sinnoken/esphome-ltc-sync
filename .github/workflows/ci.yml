@@ -13,13 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        file: [ltc-node.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml]
+        file: [ltc-node.yaml, ltc-node-online.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml, hotspot-keeper.yaml]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install esphome
       - run: |
-          cd examples
-          printf 'wifi_ssid: "ci"\nwifi_password: "ci123456"\n' > secrets.yaml
-          esphome compile ${{ matrix.file }}
+          cp examples/secrets.example.yaml examples/secrets.yaml
+          case "${{ matrix.file }}" in
+            ltc-node*.yaml) esphome -s ltc_source components compile ${{ matrix.file }} ;;
+            *) cd examples && esphome compile ${{ matrix.file }} ;;
+          esac

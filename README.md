@@ -2,7 +2,7 @@
 
 用 ESP32 + ESPHome 做的**無線同步 SMPTE LTC timecode 產生器**。每台相機（和錄音機）各掛一顆，用手機熱點或一顆 ESP32 master 當時間基準，校正後**關掉無線電自己跑**，靠電池就能撐一整天以上。
 
-> ⚠️ 狀態：韌體可以編譯（ESP-IDF 5.5.6 / ESPHome 2026.10），核心演算法有主機端測試與 24 小時閉迴路模擬，但**還沒有在實機上驗證過**。請先照 [docs/verify.md](docs/verify.md) 用兩顆 node 實測，再拿去正式拍攝。
+> ⚠️ 狀態：省電版 node 與 master 韌體可以編譯（ESP-IDF 5.5.6 / ESPHome 2026.10；online 版只通過設定檢查），核心演算法有主機端測試與 24 小時閉迴路模擬，但**還沒有在實機上驗證過**。請先照 [docs/verify.md](docs/verify.md) 用兩顆 node 實測，再拿去正式拍攝。
 
 ```
  手機熱點（2.4 GHz）           ← 每 102.4 ms 一個 beacon，內含硬體 TSF 時間戳
@@ -34,6 +34,7 @@
 | **1（首選）** | **手機熱點整天開著 + 定期對時** | `source: hotspot`、`resync_interval: 10min`（預設） | **約 0.14 ms** | 準度不靠晶振好壞，只要多開一個熱點，成本最低 |
 | 2 | 只校正一次 + 溫度補償 | `resync_interval: 0s` | 約 4 ms（模擬，實機可能較差） | 熱點只在開機 15 分鐘內需要；熱點中途斷掉時，模式 1 也會自動退回這個模式 |
 | 3 | ESP-NOW master | `source: espnow` | 約 0.14 ms | 沒有手機時使用，master 要一直供電 |
+| 4 | 一直連著熱點（online 版） | `source: wifi` | 未模擬 | 方便（HA / OTA），但耗電約 2 倍以上；所有 node 必須連同一台 AP |
 
 模式 1 的注意事項：
 - 手機接上行動電源。熱點開一整天，手機本身耗電會明顯增加。
@@ -54,18 +55,42 @@
 
 目標「一天 15 ms 以內」用模式 1（定期對時）最穩，因為誤差不會累積；溫度補償的實際效果取決於晶振和溫度感測器，請用 `ltc_compare.py` 實測。
 
-## 快速開始（手機熱點模式）
+## 設定方式（像 Athom 插座的 YAML 一樣）
+
+repo 根目錄有兩份「產品 YAML」，所有可調的東西都集中在最上面的 `substitutions:`：
+
+| 檔案 | 用途 | 電流（估計） |
+|---|---|---|
+| [`ltc-node.yaml`](ltc-node.yaml) | **預設、省電優先**：不連 Wi-Fi，只在對時視窗被動收熱點 beacon | 約 16 mA |
+| [`ltc-node-online.yaml`](ltc-node-online.yaml) | 可選：一直連著熱點，有 Home Assistant、OTA、網頁介面、可在 HA 切 fps | 約 2 倍以上 |
+
+省電版的設定流程：
+
+1. 打開 `ltc-node.yaml`，只改最上面幾行：
+
+   ```yaml
+   substitutions:
+     hotspot_ssid: "My iPhone"   # 熱點名稱（2.4 GHz）
+     fps: "25"
+     resync_interval: "10min"
+     ltc_source: "github://<你的帳號>/esphome-ltc-sync@main"
+   ```
+
+2. **所有 node 用同一份檔案**（`name_add_mac_suffix: true`，名稱自動加上 MAC 後綴，例如 `ltc-node-3a5f2c`）。所以只要編譯一次：
+   - ESPHome Dashboard：*Install → Manual download → Factory format*，拿到一個 `.bin`。
+   - 用瀏覽器開 [web.esphome.io](https://web.esphome.io)，每顆插 USB 燒同一個 `.bin`，不用裝任何軟體。
+   - 或命令列：`esphome run ltc-node.yaml --device /dev/ttyACM0`。
+3. 換專案要改 fps 時，也是改這一行，重新燒一次。
+
+省電版刻意不放 Wi-Fi 和 OTA，所以設定只能在燒錄時決定；要在現場用手機切換設定，就用 online 版（耗電會增加），或者等之後加上「控制器廣播設定」的功能。
+
+### 拍攝現場
 
 1. 手機熱點設成 **2.4 GHz**（iPhone：「最大化相容性」；Android：選 2.4 GHz 頻段、關閉「自動關閉熱點」）。
-2. 編輯 [`examples/ltc-node.yaml`](examples/ltc-node.yaml)：`hotspot_ssid:` 填熱點名稱，`fps:` 填專案影格率，每顆改不同的 `name`。
-3. 燒錄（第一次用 USB）：
-   ```bash
-   esphome run examples/ltc-node.yaml
-   ```
-4. 接線：見 [docs/hardware.md](docs/hardware.md)（GPIO → 電阻分壓 + 隔直電容 → 相機 mic 輸入）。
-5. 開熱點（iPhone 保持在「個人熱點」設定頁），node 開機，約 15 秒後鎖定（LED 亮）。之後 15 分鐘內完成 ppm 校正。
-6. 相機關閉 AGC，把 LTC 錄在一個聲道，電平約 -20 dBFS。
-7. 後製：DaVinci Resolve 選片段 → *Clip Attributes / Update Timecode from Audio Track*，或用 Tentacle Sync Studio 等工具依 LTC 對齊。
+2. 接線：見 [docs/hardware.md](docs/hardware.md)（GPIO → 電阻分壓 + 隔直電容 → 相機 mic 輸入）。
+3. 開熱點（iPhone 保持在「個人熱點」設定頁，或讓一台裝置連著），node 開機，約 15 秒後鎖定（LED 亮）。之後 15 分鐘內完成 ppm 校正。
+4. 相機關閉 AGC，把 LTC 錄在一個聲道，電平約 -20 dBFS。
+5. 後製：DaVinci Resolve 選片段 → *Clip Attributes / Update Timecode from Audio Track*，或用 Tentacle Sync Studio 等工具依 LTC 對齊。
 
 沒有手機時改用 ESP-NOW：一顆 ESP32 燒 [`examples/ltc-master.yaml`](examples/ltc-master.yaml)，node 用 [`examples/ltc-node-espnow.yaml`](examples/ltc-node-espnow.yaml)。要接 Home Assistant、用 NTP 時刻當 timecode，用 [`examples/ltc-master-wifi.yaml`](examples/ltc-master-wifi.yaml)。
 
@@ -95,13 +120,13 @@ ltc_gen:
 |---|---|---|
 | `pin` | 必填 | LTC 輸出腳位 |
 | `role` | `node` | `node` 或 `master` |
-| `source` | `hotspot` | node 的時間來源：`hotspot` / `espnow` |
+| `source` | `hotspot` | node 的時間來源：`hotspot` / `espnow` / `wifi`（需要 `wifi:` 元件，讀已連線 AP 的 TSF） |
 | `hotspot_ssid` | — | `source: hotspot` 時必填 |
 | `channel` | 自動 | hotspot：留空則掃描；espnow：須與 master 相同（預設 1） |
 | `fps` | `30` | `24`、`25`、`29.97df`、`30`（espnow 模式由 master 決定） |
 | `initial_window` | `12s` | 開機第一次對時的收聽長度（≥ 9 s，用來估 ppm） |
 | `window` | `3s` | 之後每次對時的收聽長度 |
-| `resync_interval` | `10min` | 定期對時間隔；`0s` = 只在開機後 0/1/5/15 分鐘校正，之後完全自己跑 |
+| `resync_interval` | `10min`（`wifi` 為 `1min`） | 定期對時間隔；`0s` = 只在開機後 0/1/5/15 分鐘校正，之後完全自己跑 |
 | `temperature_compensation` | `true` | 用內建溫度感測器做 ppm 補償（原版 ESP32 無此硬體，自動略過） |
 | `persist_temperature_model` | `true` | 把學到的溫度曲線存進 flash |
 | `output_offset_us` | `0` | 固定延遲修正（µs），用來抵銷不同板子/接法的常數差 |
@@ -115,7 +140,7 @@ ltc_gen:
 
 Lambda API：`id(ltc).set_fps("25")`、`id(ltc).jam()`、`id(ltc).sync_now()`、`id(ltc).timecode()`、`id(ltc).is_locked()`。
 
-限制：node 不能同時使用 `wifi:`（無線電由本元件開關）；不能與 `espnow:`、`internal_temperature` 一起用；需要 ESP-IDF framework。
+限制：`hotspot` / `espnow` 的 node 不能同時使用 `wifi:`（無線電由本元件開關），要 Wi-Fi 請用 `source: wifi`；不能與 `espnow:`、`internal_temperature` 一起用；需要 ESP-IDF framework。
 
 ## 文件
 

@@ -45,5 +45,5 @@
 
 ## 序列埠 log
 
-node 沒有 Wi-Fi，診斷資訊在 USB 序列埠：`esphome logs examples/ltc-node.yaml`。
+node 沒有 Wi-Fi，診斷資訊在 USB 序列埠：`esphome logs ltc-node.yaml`。
 `timecode`、`ppm`、`sync_error`（每次對時量到的預測誤差）、`temperature` 都會每秒印出。`sync_error` 長期在 ±200 µs 以內代表一切正常。

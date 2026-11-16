@@ -50,7 +50,7 @@ CONF_HOTSPOT_SSID = "hotspot_ssid"
 CONF_LOCKED = "locked"
 
 ROLES = {"node": Role.NODE, "master": Role.MASTER}
-SOURCES = {"hotspot": Source.HOTSPOT, "espnow": Source.ESPNOW}
+SOURCES = {"hotspot": Source.HOTSPOT, "espnow": Source.ESPNOW, "wifi": Source.WIFI}
 # value = ltc_core::Rate enum
 FPS = {"24": 0, "25": 1, "29.97df": 2, "29.97": 2, "30": 3}
 NOMINAL = {0: 24, 1: 25, 2: 30, 3: 30}
@@ -112,7 +112,8 @@ CONFIG_SCHEMA = cv.All(
                 cv.Range(min=cv.TimePeriod(seconds=1)),
             ),
             # 0s = calibrate at boot (+ 1, 5, 15 min) and then free-run forever
-            cv.Optional(CONF_RESYNC_INTERVAL, default="10min"): cv.positive_time_period_milliseconds,
+            # default: 10min (hotspot / espnow), 1min (wifi: the radio is on anyway)
+            cv.Optional(CONF_RESYNC_INTERVAL): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_TEMPERATURE_COMPENSATION, default=True): cv.boolean,
             cv.Optional(CONF_PERSIST_MODEL, default=True): cv.boolean,
             # constant correction in µs (measure once with a scope, see docs)
@@ -163,11 +164,14 @@ CONFIG_SCHEMA = cv.All(
 
 def _final_validate(config):
     full = fv.full_config.get()
-    if config[CONF_ROLE] == "node" and "wifi" in full:
-        raise cv.Invalid(
-            "ltc_gen role: node switches the radio on and off by itself; remove the "
-            "'wifi:' component from node configurations (only the master may use wifi)."
-        )
+    if config[CONF_ROLE] == "node":
+        if config[CONF_SOURCE] == "wifi" and "wifi" not in full:
+            raise cv.Invalid("ltc_gen source: wifi needs the 'wifi:' component (connect to the hotspot / router)")
+        if config[CONF_SOURCE] != "wifi" and "wifi" in full:
+            raise cv.Invalid(
+                f"ltc_gen source: {config[CONF_SOURCE]} switches the radio on and off by itself; remove "
+                "'wifi:' or use source: wifi (normal always-connected ESPHome device)."
+            )
     if "espnow" in full:
         raise cv.Invalid(
             "ltc_gen drives ESP-NOW directly; it cannot be combined with the 'espnow:' component."
@@ -212,7 +216,11 @@ async def to_code(config):
         cg.add(var.set_channel(config[CONF_CHANNEL]))
     cg.add(var.set_initial_window(config[CONF_INITIAL_WINDOW].total_milliseconds))
     cg.add(var.set_window(config[CONF_WINDOW].total_milliseconds))
-    cg.add(var.set_resync_interval(config[CONF_RESYNC_INTERVAL].total_milliseconds))
+    if CONF_RESYNC_INTERVAL in config:
+        resync = config[CONF_RESYNC_INTERVAL].total_milliseconds
+    else:
+        resync = 60000 if config[CONF_SOURCE] == "wifi" else 600000
+    cg.add(var.set_resync_interval(resync))
     cg.add(var.set_temperature_compensation(config[CONF_TEMPERATURE_COMPENSATION]))
     cg.add(var.set_persist_model(config[CONF_PERSIST_MODEL]))
     cg.add(var.set_output_offset(config[CONF_OUTPUT_OFFSET]))
