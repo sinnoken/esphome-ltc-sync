@@ -12,6 +12,7 @@ jobs:
   esphome:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         file: [ltc-node.yaml, ltc-node-lowpower.yaml, ltc-node-online.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml, hotspot-keeper.yaml]
     steps:
@@ -22,6 +23,6 @@ jobs:
       - run: |
           cp examples/secrets.example.yaml examples/secrets.yaml
           case "${{ matrix.file }}" in
-            ltc-node*.yaml) esphome -s ltc_source components compile ${{ matrix.file }} ;;
+            ltc-node.yaml|ltc-node-lowpower.yaml|ltc-node-online.yaml) esphome -s ltc_source components compile ${{ matrix.file }} ;;
             *) cd examples && esphome compile ${{ matrix.file }} ;;
           esac
