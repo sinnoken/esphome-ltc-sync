@@ -4,6 +4,14 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:   # or: Actions -> Release -> Run workflow
+    inputs:
+      tag:
+        description: "Release tag to create"
+        default: "v0.2.0"
+        required: true
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
 permissions:
   contents: write
 jobs:
@@ -22,8 +30,8 @@ jobs:
       - run: |
           mkdir -p out
           b=$(ls -d .esphome/build/*/build | head -1)
-          cp "$b/firmware.factory.bin" "out/${{ matrix.file }}-${{ github.ref_name }}.factory.bin"
-          cp "$b/firmware.ota.bin" "out/${{ matrix.file }}-${{ github.ref_name }}.ota.bin"
+          cp "$b/firmware.factory.bin" "out/${{ matrix.file }}-${{ env.TAG }}.factory.bin"
+          cp "$b/firmware.ota.bin" "out/${{ matrix.file }}-${{ env.TAG }}.ota.bin"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.file }}
@@ -37,5 +45,7 @@ jobs:
         with: { path: dist }
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
           files: dist/**/*.bin
           body_path: CHANGELOG.md
