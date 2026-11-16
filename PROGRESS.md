@@ -53,7 +53,8 @@
 - [ ] 可選的動態降頻（`power_management:`，RMT 改用 XTAL 時脈，閒置時 40 MHz、關 PLL），預設關閉，實測後再決定。
 - [ ] 根據實測決定 `resync_interval` 預設值，以及是否需要外接 TCXO 選項。
 - [ ] **熱點模式的 time-of-day timecode（free-run 慣例）**：LTC 數字要等於當天時刻。設計草案：
-  - 上線中的 node 用 SNTP（或 HA 時間）求出 `TOD = a + b·TSF`，經 ESP-NOW 設定同步分享給所有 node（含純省電版）；各台用同一組換算值，所以彼此對齊精度仍來自 TSF。
+  - 時間來源沿用 ESPHome 的 `time:` 元件（`platform: sntp` 或 `homeassistant`），把現有的 `time_id`（目前 master 專用）開放給 node；在 `on_time_sync` 時用 `gettimeofday()` 的 µs 值配對當下的 TSF。
+  - 上線中的 node 用這個時間求出 `TOD = a + b·TSF`，經 ESP-NOW 設定同步分享給所有 node（含純省電版）；各台用同一組換算值，所以彼此對齊精度仍來自 TSF。
   - 之後再取得 SNTP 時只修正速度 `b`（手機晶振相對 UTC 的 ppm），並指定「從某個 TSF 時刻起生效」，所有 node 在同一個 net 時刻切換，不會一台先跳一台後跳。
   - 熱點重開（TSF 跳變）時，由上線中的 node 重新發布換算值；沒有上線的 node 先用自己的時鐘接續。
   - 沒有 SNTP 時維持現行行為（TSF 換算的 timecode），不影響多台對齊。
