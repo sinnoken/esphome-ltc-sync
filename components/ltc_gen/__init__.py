@@ -33,6 +33,8 @@ CONF_ROLE = "role"
 CONF_FPS = "fps"
 CONF_INVERT = "invert"
 CONF_PPS_PIN = "pps_pin"
+CONF_LINE_PIN = "line_pin"
+CONF_OUTPUT_LEVEL = "output_level"
 CONF_INITIAL_WINDOW = "initial_window"
 CONF_WINDOW = "window"
 CONF_RESYNC_INTERVAL = "resync_interval"
@@ -90,6 +92,8 @@ def _tc_to_frames(tc, rate):
 
 
 def _validate_source(config):
+    if config[CONF_OUTPUT_LEVEL] == "line" and CONF_LINE_PIN not in config:
+        raise cv.Invalid("output_level: line needs line_pin (the line-level resistor tap)")
     return config
 
 
@@ -99,6 +103,9 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(LtcGen),
             cv.Required(CONF_PIN): pins.internal_gpio_output_pin_schema,
             cv.Optional(CONF_PPS_PIN): pins.internal_gpio_output_pin_schema,
+            # second resistor tap for line level (docs/hardware.md); `pin` is the mic tap
+            cv.Optional(CONF_LINE_PIN): pins.internal_gpio_output_pin_schema,
+            cv.Optional(CONF_OUTPUT_LEVEL, default="mic"): cv.one_of("mic", "line", lower=True),
             cv.Optional(CONF_INVERT, default=False): cv.boolean,
             cv.Optional(CONF_ROLE, default="node"): cv.one_of(*ROLES, lower=True),
             cv.Optional(CONF_FPS, default="30"): _fps,
@@ -221,6 +228,10 @@ async def to_code(config):
 
     pin = await cg.gpio_pin_expression(config[CONF_PIN])
     cg.add(var.set_pin(pin))
+    if CONF_LINE_PIN in config:
+        lp = await cg.gpio_pin_expression(config[CONF_LINE_PIN])
+        cg.add(var.set_line_pin(lp))
+    cg.add(var.set_initial_level(1 if config[CONF_OUTPUT_LEVEL] == "line" else 0))
     if CONF_PPS_PIN in config:
         pps = await cg.gpio_pin_expression(config[CONF_PPS_PIN])
         cg.add(var.set_pps_pin(pps))

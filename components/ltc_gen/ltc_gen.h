@@ -47,7 +47,7 @@ enum class Source : uint8_t { HOTSPOT = 0, ESPNOW = 1, WIFI = 2 };
 // Everything the real-time task receives goes through one queue so it can
 // block on a single object.
 struct Event {
-  enum Type : uint8_t { FRAME_DONE, BEACON, TSF_SAMPLE, WINDOW_BEGIN, WINDOW_END, TEMPERATURE, TIMEBASE, JAM };
+  enum Type : uint8_t { FRAME_DONE, BEACON, TSF_SAMPLE, WINDOW_BEGIN, WINDOW_END, TEMPERATURE, TIMEBASE, JAM, SET_LEVEL };
   Type type;
   int64_t local_us;
   int64_t aux;  // TSF_SAMPLE: the hotspot's TSF
@@ -70,6 +70,8 @@ class LtcGen : public Component {
   // --- configuration (code generation) ---
   void set_pin(InternalGPIOPin *pin) { pin_ = pin; }
   void set_pps_pin(InternalGPIOPin *pin) { pps_pin_ = pin; }
+  void set_line_pin(InternalGPIOPin *pin) { line_pin_ = pin; }
+  void set_initial_level(uint8_t l) { level_ = l; }
   void set_invert(bool v) { invert_ = v; }
   void set_role(Role r) { role_ = r; }
   void set_source(Source s) { source_ = s; }
@@ -129,6 +131,10 @@ class LtcGen : public Component {
   void set_online_timeout(uint32_t ms) { online_timeout_ms_ = ms; }
   void set_after_change(uint32_t ms) { after_change_ms_ = ms; }
   void set_usb_keeps_online(bool v) { usb_keeps_online_ = v; }
+  // Output level (per node, saved in flash): "mic" or "line" (needs line_pin).
+  // Switching rebuilds the RMT channel: a short LTC gap, do it while setting up.
+  bool set_output_level(const std::string &level);
+  std::string get_output_level() const;
   std::string timecode() const;
   bool is_locked() const;
 
@@ -167,6 +173,11 @@ class LtcGen : public Component {
   InternalGPIOPin *pin_{nullptr};
   InternalGPIOPin *pps_pin_{nullptr};
   int pps_gpio_{-1};
+  InternalGPIOPin *line_pin_{nullptr};
+  uint8_t level_{0};
+  volatile int pending_level_{-1};
+  ESPPreferenceObject level_pref_;
+  bool build_channel_(uint8_t level);
   bool invert_{false};
   Role role_{Role::NODE};
   Source source_{Source::HOTSPOT};

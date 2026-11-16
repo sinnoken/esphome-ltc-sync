@@ -26,8 +26,10 @@ substitutions:
   fps: "25"
   start_timecode: "00:00:00:00"
   output_offset_us: "0"
+  output_level: mic             # mic (cameras) or line (recorders); saved per node
   # Hardware (Seeed XIAO ESP32C3)
-  ltc_pin: GPIO5
+  ltc_pin: GPIO5                # D3: mic-level tap (220k)
+  line_pin: GPIO6               # D4: line-level tap (4.7k), see docs/hardware.md
   led_pin: GPIO4
   # Logging
   log_level: DEBUG
@@ -64,6 +66,8 @@ ltc_gen:
   source: hotspot
   hotspot_ssid: "${hotspot_ssid}"
   pin: ${ltc_pin}
+  line_pin: ${line_pin}
+  output_level: ${output_level}
   fps: "${fps}"
   start_timecode: "${start_timecode}"
   output_offset_us: ${output_offset_us}

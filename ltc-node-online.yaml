@@ -18,9 +18,11 @@ substitutions:
   fps: "25"                     # 24, 25, 29.97df, 30 (also selectable in HA)
   start_timecode: "00:00:00:00" # timecode at TSF 0 of the access point
   output_offset_us: "0"         # constant correction, see docs/verify.md
+  output_level: mic             # mic (cameras) or line (recorders); saved per node
   resync_interval: "1min"
   # Hardware (Seeed XIAO ESP32C3)
-  ltc_pin: GPIO5                # D3
+  ltc_pin: GPIO5                # D3: mic-level tap (220k)
+  line_pin: GPIO6               # D4: line-level tap (4.7k), see docs/hardware.md
   led_pin: GPIO4                # D2, "locked" LED via 330 ohm
   # Network
   wifi_power_save: light        # none = best timing (+~50 mA), light = longer battery life
@@ -84,6 +86,8 @@ ltc_gen:
   role: node
   source: wifi
   pin: ${ltc_pin}
+  line_pin: ${line_pin}
+  output_level: ${output_level}
   fps: "${fps}"
   start_timecode: "${start_timecode}"
   output_offset_us: ${output_offset_us}
@@ -110,9 +114,18 @@ output:
     pin: ${led_pin}
     id: lock_led
 
-# Settings below are SYNCED: change them on any online node and every node
-# in the same sync_group follows (low-power nodes within one resync interval).
 select:
+  - platform: template
+    name: "Output Level"          # per node, NOT synced (camera = mic, recorder = line)
+    icon: mdi:volume-high
+    options: ["mic", "line"]
+    entity_category: config
+    lambda: return id(ltc).get_output_level();
+    update_interval: 5s
+    set_action:
+      - lambda: id(ltc).set_output_level(x);
+  # Settings below are SYNCED: change them on any online node and every node
+  # in the same sync_group follows (low-power nodes within one resync interval).
   - platform: template
     name: "Frame Rate"
     icon: mdi:filmstrip

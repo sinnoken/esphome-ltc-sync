@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Software-switchable output level: second resistor tap on `line_pin`
+  (GPIO6 / D4), `output_level: mic | line`, "Output Level" select in HA.
+  Per node, saved in flash, not synced. New divider values (220 k / 4.7 k /
+  1 k, 22 nF), see docs/hardware.md.
+- Wiring diagrams drawn with schemdraw (`tools/draw_schematics.py`).
+
 ## v0.2.0 (2026-11-16) — first test release, NOT yet verified on hardware
 
 Firmware (Seeed XIAO ESP32C3):

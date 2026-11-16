@@ -109,7 +109,7 @@ repo 根目錄有三份「產品 YAML」，可調的東西都集中在最上面�
 1. 手機熱點設成 **2.4 GHz**（iPhone：「最大化相容性」；Android：選 2.4 GHz 頻段、關閉「自動關閉熱點」）。
 2. 接線：見 [docs/hardware.md](docs/hardware.md)（GPIO → 電阻分壓 + 隔直電容 → 相機 mic 輸入）。
 3. 開熱點（iPhone 保持在「個人熱點」設定頁，或讓一台裝置連著），node 開機，約 15 秒後鎖定（LED 亮）。之後 15 分鐘內完成 ppm 校正。
-4. 相機關閉 AGC，把 LTC 錄在一個聲道，電平約 -20 dBFS。
+4. 相機關閉 AGC，把 LTC 錄在一個聲道，電平約 -20 dBFS；錄音機那台把 Output Level 切到 line。
 5. 後製：DaVinci Resolve 選片段 → *Clip Attributes / Update Timecode from Audio Track*，或用 Tentacle Sync Studio 等工具依 LTC 對齊。
 
 沒有手機時改用 ESP-NOW：一顆 ESP32 燒 [`examples/ltc-master.yaml`](examples/ltc-master.yaml)，node 用 [`examples/ltc-node-espnow.yaml`](examples/ltc-node-espnow.yaml)。要接 Home Assistant、用 NTP 時刻當 timecode，用 [`examples/ltc-master-wifi.yaml`](examples/ltc-master-wifi.yaml)。
@@ -138,7 +138,9 @@ ltc_gen:
 
 | 選項 | 預設 | 說明 |
 |---|---|---|
-| `pin` | 必填 | LTC 輸出腳位 |
+| `pin` | 必填 | LTC 輸出腳位（mic 抽頭） |
+| `line_pin` | — | line 抽頭腳位；設了之後可用軟體切換 mic / line（[接線](docs/hardware.md)） |
+| `output_level` | `mic` | `mic` 或 `line`，每台各自記在 flash，不同步 |
 | `role` | `node` | `node` 或 `master` |
 | `source` | `hotspot` | node 的時間來源：`hotspot` / `espnow` / `wifi`（需要 `wifi:` 元件，讀已連線 AP 的 TSF） |
 | `hotspot_ssid` | — | `source: hotspot` 時必填 |
@@ -163,7 +165,7 @@ ltc_gen:
 | `locked` | — | binary sensor（可驅動 LED） |
 | `ppm` / `sync_error` / `phase_error` / `temperature` | — | 診斷用 sensor |
 
-Lambda API：`set_fps("25")`、`jam()`、`sync_now()`、`set_resync_minutes(x)`、`set_online_minutes(x)`、`enter_low_power()`、`go_online()`、`set_charging(bool)`、`set_ota_active(bool)`、`reset_settings()`、`timecode()`、`is_locked()`、`is_online()`（皆為 `id(ltc).…`）。
+Lambda API：`set_fps("25")`、`set_output_level("line")`、`jam()`、`sync_now()`、`set_resync_minutes(x)`、`set_online_minutes(x)`、`enter_low_power()`、`go_online()`、`set_charging(bool)`、`set_ota_active(bool)`、`reset_settings()`、`timecode()`、`is_locked()`、`is_online()`（皆為 `id(ltc).…`）。
 
 限制：`espnow` 的 node 不能同時使用 `wifi:`；`hotspot` 加上 `wifi:` 就是混合版；不能與 `espnow:`、`internal_temperature` 一起用；需要 ESP-IDF framework。
 

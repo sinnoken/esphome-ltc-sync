@@ -75,28 +75,25 @@ void LtcGen::setup() {
     return;
   }
 
-  // --- RMT ---
-  rmt_tx_channel_config_t cfg = {};
-  cfg.gpio_num = (gpio_num_t) pin_->get_pin();
-  cfg.clk_src = RMT_CLK_SRC_DEFAULT;
-  cfg.resolution_hz = 10000000;
-  cfg.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
-  cfg.trans_queue_depth = RING;
-  cfg.flags.invert_out = invert_;
-  if (rmt_new_tx_channel(&cfg, &chan_) != ESP_OK) {
-    ESP_LOGE(TAG, "rmt_new_tx_channel failed");
-    this->mark_failed();
-    return;
+  // --- output level (per node, not synced) ---
+  if (line_pin_ != nullptr) {
+    level_pref_ = global_preferences->make_preference<uint8_t>(fnv1_hash("ltc_gen_level"));
+    uint8_t lv;
+    if (level_pref_.load(&lv) && lv <= 1) level_ = lv;
+  } else {
+    level_ = 0;
   }
+
+  // --- RMT ---
   rmt_copy_encoder_config_t ecfg = {};
   if (rmt_new_copy_encoder(&ecfg, &enc_) != ESP_OK) {
     this->mark_failed();
     return;
   }
-  rmt_tx_event_callbacks_t cbs = {};
-  cbs.on_trans_done = rmt_done_cb_;
-  rmt_tx_register_event_callbacks(chan_, &cbs, this);
-  rmt_enable(chan_);
+  if (!build_channel_(level_)) {
+    this->mark_failed();
+    return;
+  }
 
   if (pps_pin_ != nullptr) {
     pps_pin_->setup();
@@ -157,7 +154,9 @@ void LtcGen::setup() {
 
 void LtcGen::dump_config() {
   ESP_LOGCONFIG(TAG, "LTC generator:");
-  LOG_PIN("  Output pin: ", pin_);
+  LOG_PIN("  Output pin (mic): ", pin_);
+  if (line_pin_ != nullptr) LOG_PIN("  Output pin (line): ", line_pin_);
+  ESP_LOGCONFIG(TAG, "  Output level: %s", level_ == 1 ? "line" : "mic");
   if (pps_pin_ != nullptr) LOG_PIN("  PPS pin: ", pps_pin_);
   ESP_LOGCONFIG(TAG, "  Role: %s", role_ == Role::MASTER ? "master" : "node");
   if (role_ == Role::NODE) {
@@ -459,6 +458,9 @@ void LtcGen::task_() {
             portEXIT_CRITICAL(&lock_);
           }
           break;
+        case Event::SET_LEVEL:
+          if ((uint8_t) e.value != level_) pending_level_ = (int) e.value;
+          break;
         case Event::TIMEBASE:
           engine_.set_timebase((Rate) (int) e.value, e.local_us);
           break;
@@ -466,13 +468,23 @@ void LtcGen::task_() {
     }
 
     // stream management
+    // output level switch: let the queued frames drain, rebuild the channel on
+    // the other pin, restart the stream (short gap in the LTC, set-up only)
+    if (pending_level_ >= 0 && (!streaming_ || engine_.in_flight() == 0)) {
+      build_channel_((uint8_t) pending_level_);
+      pending_level_ = -1;
+      if (streaming_) {
+        streaming_ = false;
+        engine_.stop();
+      }
+    }
     if (streaming_ && engine_.restart_pending() && engine_.in_flight() == 0) {
       streaming_ = false;
       engine_.stop();
     }
     bool have_timebase = role_ == Role::MASTER || source_ != Source::ESPNOW || pairer_.have_info();
     if (!streaming_ && have_timebase && engine_.clock().valid()) start_stream_();
-    if (streaming_ && !engine_.restart_pending()) {
+    if (streaming_ && !engine_.restart_pending() && pending_level_ < 0) {
       while (engine_.in_flight() < engine_.depth()) queue_frame_();
     }
 
@@ -494,6 +506,63 @@ void LtcGen::task_() {
   }
 }
 
+static void release_pin(int gpio) {
+  if (gpio < 0) return;
+  gpio_reset_pin((gpio_num_t) gpio);
+  gpio_set_direction((gpio_num_t) gpio, GPIO_MODE_INPUT);  // high impedance
+  gpio_set_pull_mode((gpio_num_t) gpio, GPIO_FLOATING);
+}
+
+// level 0 = mic tap (pin), 1 = line tap (line_pin). The unused tap is left
+// floating, so its resistor carries no current and does not load the output.
+bool LtcGen::build_channel_(uint8_t level) {
+  if (chan_ != nullptr) {
+    rmt_disable(chan_);
+    rmt_del_channel(chan_);
+    chan_ = nullptr;
+  }
+  int active = (level == 1 && line_pin_ != nullptr) ? line_pin_->get_pin() : pin_->get_pin();
+  int idle = (line_pin_ == nullptr) ? -1 : (active == pin_->get_pin() ? line_pin_->get_pin() : pin_->get_pin());
+  release_pin(idle);
+  rmt_tx_channel_config_t cfg = {};
+  cfg.gpio_num = (gpio_num_t) active;
+  cfg.clk_src = RMT_CLK_SRC_DEFAULT;
+  cfg.resolution_hz = 10000000;
+  cfg.mem_block_symbols = SOC_RMT_MEM_WORDS_PER_CHANNEL;
+  cfg.trans_queue_depth = RING;
+  cfg.flags.invert_out = invert_;
+  if (rmt_new_tx_channel(&cfg, &chan_) != ESP_OK) {
+    ESP_LOGE(TAG, "rmt_new_tx_channel failed");
+    chan_ = nullptr;
+    return false;
+  }
+  rmt_tx_event_callbacks_t cbs = {};
+  cbs.on_trans_done = rmt_done_cb_;
+  rmt_tx_register_event_callbacks(chan_, &cbs, this);
+  rmt_enable(chan_);
+  level_ = level;
+  return true;
+}
+
+bool LtcGen::set_output_level(const std::string &level) {
+  uint8_t lv;
+  if (level == "mic")
+    lv = 0;
+  else if (level == "line")
+    lv = 1;
+  else
+    return false;
+  if (lv == 1 && line_pin_ == nullptr) return false;
+  if (line_pin_ != nullptr) level_pref_.save(&lv);
+  Event e = {};
+  e.type = Event::SET_LEVEL;
+  e.value = lv;
+  post_(e);
+  return true;
+}
+
+std::string LtcGen::get_output_level() const { return level_ == 1 ? "line" : "mic"; }
+
 void LtcGen::start_stream_() {
   int64_t start_local;
   if (!engine_.plan_start(esp_timer_get_time(), 5000, &start_local)) return;
@@ -508,6 +577,7 @@ void LtcGen::start_stream_() {
 }
 
 void LtcGen::queue_frame_() {
+  if (chan_ == nullptr) return;
   ltc_core::QueuedFrame qf;
   engine_.next_frame(&qf);
   uint32_t q = queued_tx_++;
