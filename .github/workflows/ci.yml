@@ -1,16 +1,51 @@
 name: CI
-on: [push, pull_request]
+
+# Only run when something that can break the build changed.
+# Docs-only commits (README, PROGRESS.md, docs/) do not trigger CI.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "components/**"
+      - "*.yaml"
+      - "examples/**"
+      - "test/**"
+      - "tools/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "components/**"
+      - "*.yaml"
+      - "examples/**"
+      - "test/**"
+      - "tools/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+# A newer push cancels the run that is still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so a new ESPHome release cannot break CI on its own.
+  # Bump deliberately (and test) when upgrading.
+  ESPHOME_VERSION: "2026.10.2"
+
 jobs:
   host-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - run: pip install numpy
       - run: cd test && make libltc && make test
+
   esphome:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -19,7 +54,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install esphome
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/esphome
+          key: esphome-${{ env.ESPHOME_VERSION }}-${{ matrix.file }}
+          restore-keys: esphome-${{ env.ESPHOME_VERSION }}-
+      - run: pip install "esphome==${ESPHOME_VERSION}"
       - run: |
           cp examples/secrets.example.yaml examples/secrets.yaml
           case "${{ matrix.file }}" in

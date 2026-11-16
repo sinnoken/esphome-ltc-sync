@@ -12,6 +12,7 @@ on:
         required: true
 env:
   TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  ESPHOME_VERSION: "2026.10.2"   # same as CI
 permissions:
   contents: write
 jobs:
@@ -25,7 +26,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install esphome
+      - run: pip install "esphome==${ESPHOME_VERSION}"
       - run: esphome -s ltc_source components compile ${{ matrix.file }}.yaml
       - run: |
           mkdir -p out

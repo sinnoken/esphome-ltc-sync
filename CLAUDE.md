@@ -31,6 +31,12 @@ esphome -s ltc_source components config ltc-node.yaml   # 根目錄 YAML 用本�
 
 改到 C++ 或 YAML 之後，推上 `main` 讓 GitHub CI 完整編譯所有 YAML（本機環境可能連不到 Espressif / PlatformIO 套件庫）。用 `curl https://api.github.com/repos/sinnoken/esphome-ltc-sync/actions/runs?per_page=1` 查結果。
 
+## CI
+
+- CI 只在 `components/`、根目錄 YAML、`examples/`、`test/`、`tools/`、`ci.yml` 有變動時才跑；文件更新不會觸發。
+- 把相關修改整理成一次推送，不要為了小改動連續推很多次（每次都會跑 7 個韌體編譯）。
+- ESPHome 版本固定在 workflow 的 `ESPHOME_VERSION`；升級要刻意做，並在 PROGRESS.md 記錄。
+
 ## Git
 
 - 直接 commit 到 `main` 並推送；commit 訊息用英文。
