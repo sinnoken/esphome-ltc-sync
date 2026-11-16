@@ -619,6 +619,55 @@ class BeaconPairer {
 };
 
 // ---------------------------------------------------------------------------
+// Settings sync (ESP-NOW): "change one node, all follow"
+// ---------------------------------------------------------------------------
+// Online nodes broadcast their settings every second on the hotspot channel.
+// Nodes in low-power mode pick them up passively during their sync windows.
+// The newest revision wins; ties are broken by the author id, so all nodes
+// converge on the same settings whatever order they hear them in.
+static const uint32_t SETTINGS_MAGIC = 0x5343544C;  // "LTCS"
+static const uint8_t SETTINGS_VERSION = 1;
+
+#pragma pack(push, 1)
+struct SettingsPacket {
+  uint32_t magic;
+  uint8_t version;
+  uint8_t rate;        // Rate enum
+  uint16_t reserved;
+  uint32_t group;      // hash of sync_group, foreign groups are ignored
+  uint32_t rev;        // revision, bumped on every local change
+  uint32_t author;     // id of the node that made the change (tie-break)
+  int64_t origin;      // network time of timecode 00:00:00:00
+  uint32_t resync_ms;
+  uint32_t online_ms;
+};
+#pragma pack(pop)
+
+// true if a should replace b
+inline bool settings_newer(const SettingsPacket &a, const SettingsPacket &b) {
+  if (a.rev != b.rev) return a.rev > b.rev;
+  return a.author > b.author;
+}
+
+inline bool settings_valid(const SettingsPacket &p, uint32_t group) {
+  return p.magic == SETTINGS_MAGIC && p.version == SETTINGS_VERSION && p.group == group && p.rate <= 3;
+}
+
+// Extract an ESP-NOW payload from a raw 802.11 action frame (promiscuous
+// capture). Layout: 24 B MAC header, category 127, OUI 18:fe:34, 4 random
+// bytes, then vendor IE: id 221, len, OUI 18:fe:34, type 4, version, body.
+// Returns the body length or -1.
+inline int espnow_payload(const uint8_t *frame, int len, const uint8_t **body) {
+  if (len < 39 || frame[0] != 0xD0) return -1;
+  if (frame[24] != 127 || frame[25] != 0x18 || frame[26] != 0xFE || frame[27] != 0x34) return -1;
+  if (frame[32] != 221 || frame[34] != 0x18 || frame[35] != 0xFE || frame[36] != 0x34 || frame[37] != 4) return -1;
+  int blen = (int) frame[33] - 5;
+  if (blen < 0 || 39 + blen > len) return -1;
+  *body = frame + 39;
+  return blen;
+}
+
+// ---------------------------------------------------------------------------
 // Phase controller with transport-delay compensation
 // ---------------------------------------------------------------------------
 // Frames are queued `depth` frames ahead of the one being transmitted, so a

@@ -47,6 +47,11 @@ CONF_TIMECODE = "timecode"
 CONF_SOURCE = "source"
 CONF_SYNC_STATE = "sync_state"
 CONF_HOTSPOT_SSID = "hotspot_ssid"
+CONF_ONLINE_TIMEOUT = "online_timeout"
+CONF_ONLINE_AFTER_CHANGE = "online_after_change"
+CONF_USB_KEEPS_ONLINE = "usb_keeps_online"
+CONF_SYNC_GROUP = "sync_group"
+CONF_SETTINGS_SYNC = "settings_sync"
 CONF_LOCKED = "locked"
 
 ROLES = {"node": Role.NODE, "master": Role.MASTER}
@@ -85,8 +90,6 @@ def _tc_to_frames(tc, rate):
 
 
 def _validate_source(config):
-    if config[CONF_ROLE] == "node" and config[CONF_SOURCE] == "hotspot" and CONF_HOTSPOT_SSID not in config:
-        raise cv.Invalid("source: hotspot needs hotspot_ssid (the name of your phone's hotspot)")
     return config
 
 
@@ -101,6 +104,15 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_FPS, default="30"): _fps,
             cv.Optional(CONF_SOURCE, default="hotspot"): cv.one_of(*SOURCES, lower=True),
             cv.Optional(CONF_HOTSPOT_SSID): cv.ssid,
+            # hybrid (source: hotspot + wifi: component): stay online this long after boot
+            cv.Optional(CONF_ONLINE_TIMEOUT, default="30min"): cv.positive_time_period_milliseconds,
+            # ... and go to low power this long after the last setting change
+            cv.Optional(CONF_ONLINE_AFTER_CHANGE, default="2min"): cv.positive_time_period_milliseconds,
+            # stay online while plugged into a computer (USB data connection)
+            cv.Optional(CONF_USB_KEEPS_ONLINE, default=True): cv.boolean,
+            # nodes with the same sync_group share fps / jam / intervals over ESP-NOW
+            cv.Optional(CONF_SETTINGS_SYNC, default=True): cv.boolean,
+            cv.Optional(CONF_SYNC_GROUP, default="ltc"): cv.string_strict,
             # hotspot: optional (scanned when omitted); espnow: must match the master
             cv.Optional(CONF_CHANNEL): cv.int_range(min=1, max=13),
             cv.Optional(CONF_INITIAL_WINDOW, default="12s"): cv.All(
@@ -167,11 +179,17 @@ def _final_validate(config):
     if config[CONF_ROLE] == "node":
         if config[CONF_SOURCE] == "wifi" and "wifi" not in full:
             raise cv.Invalid("ltc_gen source: wifi needs the 'wifi:' component (connect to the hotspot / router)")
-        if config[CONF_SOURCE] != "wifi" and "wifi" in full:
-            raise cv.Invalid(
-                f"ltc_gen source: {config[CONF_SOURCE]} switches the radio on and off by itself; remove "
-                "'wifi:' or use source: wifi (normal always-connected ESPHome device)."
-            )
+        if config[CONF_SOURCE] == "espnow" and "wifi" in full:
+            raise cv.Invalid("ltc_gen source: espnow switches the radio by itself; remove 'wifi:'")
+        if config[CONF_SOURCE] == "hotspot" and "wifi" not in full and CONF_HOTSPOT_SSID not in config:
+            raise cv.Invalid("source: hotspot without wifi needs hotspot_ssid (the name of your phone's hotspot)")
+        if config[CONF_SOURCE] == "hotspot" and "wifi" in full:
+            # hybrid: wifi is switched off for low-power mode; nothing may reboot because of that
+            api = full.get("api")
+            if api is not None and api.get("reboot_timeout") and api["reboot_timeout"].total_milliseconds != 0:
+                raise cv.Invalid("hybrid ltc_gen node: set 'api: reboot_timeout: 0s' (wifi is off in low-power mode)")
+            if full["wifi"].get("reboot_timeout") and full["wifi"]["reboot_timeout"].total_milliseconds != 0:
+                raise cv.Invalid("hybrid ltc_gen node: set 'wifi: reboot_timeout: 0s' (wifi is off in low-power mode)")
     if "espnow" in full:
         raise cv.Invalid(
             "ltc_gen drives ESP-NOW directly; it cannot be combined with the 'espnow:' component."
@@ -196,6 +214,7 @@ async def to_code(config):
     esp32.include_builtin_idf_component("esp_phy")
     esp32.include_builtin_idf_component("esp_event")
     esp32.include_builtin_idf_component("esp_netif")
+    esp32.include_builtin_idf_component("esp_driver_usb_serial_jtag")
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -210,6 +229,11 @@ async def to_code(config):
     rate = FPS[config[CONF_FPS]]
     cg.add(var.set_rate(rate))
     cg.add(var.set_source(SOURCES[config[CONF_SOURCE]]))
+    cg.add(var.set_online_timeout(config[CONF_ONLINE_TIMEOUT].total_milliseconds))
+    cg.add(var.set_after_change(config[CONF_ONLINE_AFTER_CHANGE].total_milliseconds))
+    cg.add(var.set_usb_keeps_online(config[CONF_USB_KEEPS_ONLINE]))
+    cg.add(var.set_settings_sync(config[CONF_SETTINGS_SYNC]))
+    cg.add(var.set_sync_group(config[CONF_SYNC_GROUP]))
     if CONF_HOTSPOT_SSID in config:
         cg.add(var.set_hotspot_ssid(config[CONF_HOTSPOT_SSID]))
     if CONF_CHANNEL in config:

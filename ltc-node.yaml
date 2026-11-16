@@ -1,32 +1,42 @@
-# ESPHome LTC timecode node - default, low-power edition (~16 mA).
-# No Wi-Fi connection: the radio is only switched on for short sync windows
-# in which the node passively listens to the beacons of a phone hotspot (it
-# never connects and never transmits).
+# ESPHome LTC timecode node - default "hybrid" edition.
 #
-# Configuration: edit the substitutions below - that is all. Every node uses
-# this same file (the name gets a MAC suffix), so build once and flash the
-# same firmware to all nodes over USB (ESPHome dashboard: Install -> Manual
-# download -> Factory format, then web.esphome.io). No HA / OTA on purpose.
+#   power on ──> ONLINE (Wi-Fi, Home Assistant, web UI, OTA)
+#                 │  30 min after boot, or 2 min after the last setting change,
+#                 │  or "Enter Low Power" button
+#                 ▼
+#               LOW POWER (~16 mA): Wi-Fi off, wakes 3 s every 10 min and
+#                 │  passively listens to the hotspot beacons
+#                 │  plugged into a computer (USB) / "charging" pin / power cycle
+#                 ▼
+#               ONLINE again (OTA possible)
+#
+# Timing always comes from the beacons of the Wi-Fi network it joins, so set
+# up Wi-Fi with your PHONE HOTSPOT (2.4 GHz) and give every node the same one.
+# LTC output never stops while switching modes.
 # Hardware: Seeed XIAO ESP32C3, LTC on D3 -> attenuator -> camera input.
 
 substitutions:
   # Identity
   name: "ltc-node"
   friendly_name: "LTC Node"
-  device_description: "Wireless SMPTE LTC timecode generator (low power)"
+  device_description: "Wireless SMPTE LTC timecode generator"
   project_name: "esphome-ltc-sync.ltc-node"
-  project_version: "v0.1.0"
+  project_version: "v0.2.0"
   ltc_source: "github://your-github-user/esphome-ltc-sync@main"
-  # Time reference
-  hotspot_ssid: "My iPhone"     # 2.4 GHz! iPhone: "Maximize Compatibility"
-  resync_interval: "10min"      # 0s = calibrate at boot (+1, +5, +15 min) then free-run
+  # Power
+  online_timeout: "30min"       # stay online this long after power-on
+  online_after_change: "2min"   # ... or go to low power this long after a setting change
+  resync_interval: "10min"      # low-power resync (online it syncs every minute)
   # Timecode
-  fps: "25"
+  fps: "25"                     # 24, 25, 29.97df, 30 (also selectable in HA)
   start_timecode: "00:00:00:00"
   output_offset_us: "0"
   # Hardware (Seeed XIAO ESP32C3)
-  ltc_pin: GPIO5
-  led_pin: GPIO4
+  ltc_pin: GPIO5                # D3
+  led_pin: GPIO4                # D2, "locked" LED via 330 ohm
+  # Network
+  wifi_power_save: light
+  timezone: ""
   # Logging
   log_level: DEBUG
 
@@ -53,19 +63,54 @@ external_components:
 preferences:
   flash_write_interval: 5min
 
+api:
+  reboot_timeout: 0s            # Wi-Fi is off in low-power mode: never reboot for that
+
+ota:
+  - platform: esphome
+    on_begin:
+      - lambda: id(ltc).set_ota_active(true);
+    on_end:
+      - lambda: id(ltc).set_ota_active(false);
+    on_error:
+      - lambda: id(ltc).set_ota_active(false);
+    on_abort:
+      - lambda: id(ltc).set_ota_active(false);
+
 logger:
   level: ${log_level}
+
+mdns:
+
+web_server:
+  port: 80
+  version: 3
+
+wifi:
+  ap: {}
+  reboot_timeout: 0s
+  power_save_mode: ${wifi_power_save}
+
+captive_portal:
+
+improv_serial:
+
+dashboard_import:
+  package_import_url: github://your-github-user/esphome-ltc-sync/ltc-node.yaml@main
+  import_full_config: false
 
 ltc_gen:
   id: ltc
   role: node
-  source: hotspot
-  hotspot_ssid: "${hotspot_ssid}"
+  source: hotspot               # + wifi: above = hybrid; hotspot name learned while online
   pin: ${ltc_pin}
   fps: "${fps}"
   start_timecode: "${start_timecode}"
   output_offset_us: ${output_offset_us}
   resync_interval: ${resync_interval}
+  online_timeout: ${online_timeout}
+  online_after_change: ${online_after_change}
+  usb_keeps_online: true
   timecode:
     name: "Timecode"
   sync_state:
@@ -87,3 +132,121 @@ output:
   - platform: gpio
     pin: ${led_pin}
     id: lock_led
+
+# Settings below are SYNCED: change them on any online node and every node
+# in the same sync_group follows (low-power nodes within one resync interval).
+select:
+  - platform: template
+    name: "Frame Rate"
+    icon: mdi:filmstrip
+    options: ["24", "25", "29.97df", "30"]
+    lambda: return id(ltc).get_fps();
+    update_interval: 2s
+    set_action:
+      - lambda: id(ltc).set_fps(x);
+
+number:
+  - platform: template
+    name: "Resync Interval"
+    icon: mdi:timer-sync-outline
+    unit_of_measurement: min
+    min_value: 0
+    max_value: 60
+    step: 1
+    mode: box
+    entity_category: config
+    lambda: return id(ltc).get_resync_minutes();
+    update_interval: 5s
+    set_action:
+      - lambda: id(ltc).set_resync_minutes(x);
+  - platform: template
+    name: "Online Time After Power-on"
+    icon: mdi:wifi-clock
+    unit_of_measurement: min
+    min_value: 0
+    max_value: 240
+    step: 5
+    mode: box
+    entity_category: config
+    lambda: return id(ltc).get_online_minutes();
+    update_interval: 5s
+    set_action:
+      - lambda: id(ltc).set_online_minutes(x);
+
+binary_sensor:
+  - platform: status
+    name: "Status"
+    entity_category: diagnostic
+  # Optional "charging" sense: XIAO 5V pin -> 100k -> GPIO3 (D1) -> 100k -> GND.
+  # While USB power is present the node stays online (OTA, HA).
+  # - platform: gpio
+  #   pin: GPIO3
+  #   name: "USB Power"
+  #   entity_category: diagnostic
+  #   on_press:
+  #     - lambda: id(ltc).set_charging(true);
+  #   on_release:
+  #     - lambda: id(ltc).set_charging(false);
+
+button:
+  - platform: template
+    name: "Enter Low Power"
+    icon: mdi:battery-heart-variant
+    on_press:
+      - lambda: id(ltc).enter_low_power();
+  - platform: template
+    name: "Sync Now"
+    icon: mdi:sync
+    on_press:
+      - lambda: id(ltc).sync_now();
+  - platform: template
+    name: "Jam Timecode"            # synced: all nodes restart at start_timecode
+    icon: mdi:timer-refresh-outline
+    on_press:
+      - lambda: id(ltc).jam();
+  - platform: template
+    name: "Reset Synced Settings"   # back to the YAML defaults after restart
+    entity_category: config
+    on_press:
+      - lambda: id(ltc).reset_settings();
+  - platform: restart
+    name: "Restart"
+    entity_category: config
+  - platform: safe_mode
+    name: "Safe Mode"
+    entity_category: config
+  - platform: factory_reset
+    name: "Factory Reset"
+    entity_category: config
+
+sensor:
+  - platform: template
+    name: "Settings Revision"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    lambda: return id(ltc).settings_rev();
+    update_interval: 10s
+  - platform: uptime
+    name: "Uptime"
+    type: timestamp
+    entity_category: diagnostic
+  - platform: wifi_signal
+    name: "WiFi Signal dB"
+    id: wifi_signal_db
+    update_interval: 60s
+    entity_category: diagnostic
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "${timezone}"
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    ssid:
+      name: "Connected SSID"
+      entity_category: diagnostic

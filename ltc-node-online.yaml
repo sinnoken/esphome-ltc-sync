@@ -110,18 +110,32 @@ output:
     pin: ${led_pin}
     id: lock_led
 
+# Settings below are SYNCED: change them on any online node and every node
+# in the same sync_group follows (low-power nodes within one resync interval).
 select:
   - platform: template
     name: "Frame Rate"
-    id: fps_select
     icon: mdi:filmstrip
     options: ["24", "25", "29.97df", "30"]
-    initial_option: "${fps}"
-    optimistic: true
-    restore_value: true
-    entity_category: config
-    on_value:
+    lambda: return id(ltc).get_fps();
+    update_interval: 2s
+    set_action:
       - lambda: id(ltc).set_fps(x);
+
+number:
+  - platform: template
+    name: "Resync Interval"
+    icon: mdi:timer-sync-outline
+    unit_of_measurement: min
+    min_value: 0
+    max_value: 60
+    step: 1
+    mode: box
+    entity_category: config
+    lambda: return id(ltc).get_resync_minutes();
+    update_interval: 5s
+    set_action:
+      - lambda: id(ltc).set_resync_minutes(x);
 
 binary_sensor:
   - platform: status
@@ -134,6 +148,16 @@ button:
     icon: mdi:sync
     on_press:
       - lambda: id(ltc).sync_now();
+  - platform: template
+    name: "Jam Timecode"            # synced: all nodes restart at start_timecode
+    icon: mdi:timer-refresh-outline
+    on_press:
+      - lambda: id(ltc).jam();
+  - platform: template
+    name: "Reset Synced Settings"   # back to the YAML defaults after restart
+    entity_category: config
+    on_press:
+      - lambda: id(ltc).reset_settings();
   - platform: restart
     name: "Restart"
     entity_category: config
@@ -145,6 +169,13 @@ button:
     entity_category: config
 
 sensor:
+  - platform: template
+    name: "Settings Revision"
+    icon: mdi:counter
+    accuracy_decimals: 0
+    entity_category: diagnostic
+    lambda: return id(ltc).settings_rev();
+    update_interval: 10s
   - platform: uptime
     name: "Uptime"
     type: timestamp

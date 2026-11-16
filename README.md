@@ -2,7 +2,7 @@
 
 用 ESP32 + ESPHome 做的**無線同步 SMPTE LTC timecode 產生器**。每台相機（和錄音機）各掛一顆，用手機熱點或一顆 ESP32 master 當時間基準，校正後**關掉無線電自己跑**，靠電池就能撐一整天以上。
 
-> ⚠️ 狀態：省電版 node 與 master 韌體可以編譯（ESP-IDF 5.5.6 / ESPHome 2026.10；online 版只通過設定檢查），核心演算法有主機端測試與 24 小時閉迴路模擬，但**還沒有在實機上驗證過**。請先照 [docs/verify.md](docs/verify.md) 用兩顆 node 實測，再拿去正式拍攝。
+> ⚠️ 狀態：純省電版、混合版（不含 HA API 的組態）、ESP-NOW node 與 master 都能編譯（ESP-IDF 5.5.6 / ESPHome 2026.10）；含 API 的完整混合版與 online 版只通過設定檢查（建置環境連不到 Espressif / PlatformIO 套件庫），核心演算法有主機端測試與 24 小時閉迴路模擬，但**還沒有在實機上驗證過**。請先照 [docs/verify.md](docs/verify.md) 用兩顆 node 實測，再拿去正式拍攝。
 
 ```
  手機熱點（2.4 GHz）           ← 每 102.4 ms 一個 beacon，內含硬體 TSF 時間戳
@@ -57,32 +57,52 @@
 
 ## 設定方式（像 Athom 插座的 YAML 一樣）
 
-repo 根目錄有兩份「產品 YAML」，所有可調的東西都集中在最上面的 `substitutions:`：
+repo 根目錄有三份「產品 YAML」，可調的東西都集中在最上面的 `substitutions:`，所有 node 共用同一份（`name_add_mac_suffix: true`，名稱自動加 MAC 後綴）：
 
-| 檔案 | 用途 | 電流（估計） |
+| 檔案 | 行為 | 電流（估計） |
 |---|---|---|
-| [`ltc-node.yaml`](ltc-node.yaml) | **預設、省電優先**：不連 Wi-Fi，只在對時視窗被動收熱點 beacon | 約 16 mA |
-| [`ltc-node-online.yaml`](ltc-node-online.yaml) | 可選：一直連著熱點，有 Home Assistant、OTA、網頁介面、可在 HA 切 fps | 約 2 倍以上 |
+| [`ltc-node.yaml`](ltc-node.yaml) | **預設，混合版**：開機上線 30 分鐘（HA、網頁、OTA），之後自動進省電模式 | 上線時較高，省電時約 16 mA |
+| [`ltc-node-lowpower.yaml`](ltc-node-lowpower.yaml) | 純省電：完全不連 Wi-Fi，只在對時視窗被動收 beacon | 約 16 mA |
+| [`ltc-node-online.yaml`](ltc-node-online.yaml) | 一直上線（像插座一樣） | 約 2 倍以上 |
 
-省電版的設定流程：
+### 混合版的狀態切換
 
-1. 打開 `ltc-node.yaml`，只改最上面幾行：
+```
+開機 ──> 上線（Wi-Fi、HA、網頁、OTA）
+          │  開機 30 分鐘後、最後一次改設定 2 分鐘後、或按「Enter Low Power」
+          ▼
+        省電（Wi-Fi 關閉，每 10 分鐘醒來 3 秒被動收熱點 beacon）
+          │  插上電腦 USB、「充電」偵測腳為高、或重新開機
+          ▼
+        上線（可以 OTA）
+```
 
-   ```yaml
-   substitutions:
-     hotspot_ssid: "My iPhone"   # 熱點名稱（2.4 GHz）
-     fps: "25"
-     resync_interval: "10min"
-     ltc_source: "github://<你的帳號>/esphome-ltc-sync@main"
-   ```
+- Wi-Fi 請設定成**手機熱點**（2.4 GHz），所有 node 連同一個。上線時就在熱點的頻道上收 beacon，省電時收的也是同一個熱點，兩種模式用同一個時間基準，LTC 輸出全程不中斷。
+- 第一次設定 Wi-Fi：像 Athom 插座一樣，用 ESPHome 的 improv（USB）或 node 自己開的設定熱點 `ltc-node-xxxxxx`（captive portal）。
+- OTA 進行中、插著電腦 USB 時不會進省電模式。要偵測「接上充電器」（沒有資料線也算），可以把 XIAO 的 5V 腳經 100 kΩ/100 kΩ 分壓接到 GPIO3，YAML 裡已經有註解掉的範例。
+- 需要 `api: reboot_timeout: 0s` 和 `wifi: reboot_timeout: 0s`（範本已設好；少了會在設定檢查時擋下來），否則 Wi-Fi 關掉後會被自動重開機。
 
-2. **所有 node 用同一份檔案**（`name_add_mac_suffix: true`，名稱自動加上 MAC 後綴，例如 `ltc-node-3a5f2c`）。所以只要編譯一次：
-   - ESPHome Dashboard：*Install → Manual download → Factory format*，拿到一個 `.bin`。
-   - 用瀏覽器開 [web.esphome.io](https://web.esphome.io)，每顆插 USB 燒同一個 `.bin`，不用裝任何軟體。
-   - 或命令列：`esphome run ltc-node.yaml --device /dev/ttyACM0`。
-3. 換專案要改 fps 時，也是改這一行，重新燒一次。
+### 設定同步：改一台，全部跟著變
 
-省電版刻意不放 Wi-Fi 和 OTA，所以設定只能在燒錄時決定；要在現場用手機切換設定，就用 online 版（耗電會增加），或者等之後加上「控制器廣播設定」的功能。
+在 **任何一台上線中的 node**（HA 或它的網頁）改下列設定，其他同一個 `sync_group` 的 node 都會跟著換，包括省電中的 node（最慢一個對時間隔內）和純省電版：
+
+| 同步的設定 | HA 實體 |
+|---|---|
+| 影格率 | Frame Rate |
+| 從 start_timecode 重新開始計時 | Jam Timecode（按鈕） |
+| 對時間隔 | Resync Interval |
+| 開機上線時間 | Online Time After Power-on |
+
+- 上線中的 node 每秒用 ESP-NOW 在熱點頻道廣播一次設定；省電中的 node 在對時視窗被動收下，**仍然只收不發**。
+- 每次修改版本號加 1，最新的版本勝出；設定存在 flash，重開機後還在。YAML 裡的值只是第一次開機的預設值；要回到 YAML 的值，按「Reset Synced Settings」後重開機。
+- 不要在拍攝途中改 fps 或 jam：各台套用的時間點最多差一個對時間隔。
+- 至少要有一台在上線狀態才能發出設定（剛開機的 30 分鐘內，或插上 USB 的那台）。
+
+### 燒錄
+
+1. 改 `ltc-node.yaml` 最上面的 `substitutions`（至少把 `ltc_source` 換成你的 GitHub 帳號）。
+2. 第一次用 USB：ESPHome Dashboard *Install → Manual download → Factory format*，到 [web.esphome.io](https://web.esphome.io) 每顆燒同一個 `.bin`；或 `esphome run ltc-node.yaml`。
+3. 之後混合版可以在上線期間 OTA；純省電版只能用 USB。
 
 ### 拍攝現場
 
@@ -132,15 +152,20 @@ ltc_gen:
 | `output_offset_us` | `0` | 固定延遲修正（µs），用來抵銷不同板子/接法的常數差 |
 | `start_timecode` | `00:00:00:00` | hotspot：TSF 0 時的 timecode；master：開機時的 timecode |
 | `time_id` | — | master 專用：用 `time:` 元件的當地時刻當 timecode |
+| `online_timeout` | `30min` | 混合版：開機後上線多久（`0s` = 直接進省電） |
+| `online_after_change` | `2min` | 混合版：最後一次改設定後多久進省電 |
+| `usb_keeps_online` | `true` | 混合版：插著電腦 USB 時保持上線 |
+| `settings_sync` | `true` | 是否參與 ESP-NOW 設定同步（hotspot / wifi node） |
+| `sync_group` | `ltc` | 同一組的 node 才互相同步設定 |
 | `pps_pin` | — | 每秒輸出一個 1 幀寬的脈衝，給示波器驗證用 |
 | `invert` | `false` | 反相輸出 |
 | `timecode` / `sync_state` | — | text sensor |
 | `locked` | — | binary sensor（可驅動 LED） |
 | `ppm` / `sync_error` / `phase_error` / `temperature` | — | 診斷用 sensor |
 
-Lambda API：`id(ltc).set_fps("25")`、`id(ltc).jam()`、`id(ltc).sync_now()`、`id(ltc).timecode()`、`id(ltc).is_locked()`。
+Lambda API：`set_fps("25")`、`jam()`、`sync_now()`、`set_resync_minutes(x)`、`set_online_minutes(x)`、`enter_low_power()`、`go_online()`、`set_charging(bool)`、`set_ota_active(bool)`、`reset_settings()`、`timecode()`、`is_locked()`、`is_online()`（皆為 `id(ltc).…`）。
 
-限制：`hotspot` / `espnow` 的 node 不能同時使用 `wifi:`（無線電由本元件開關），要 Wi-Fi 請用 `source: wifi`；不能與 `espnow:`、`internal_temperature` 一起用；需要 ESP-IDF framework。
+限制：`espnow` 的 node 不能同時使用 `wifi:`；`hotspot` 加上 `wifi:` 就是混合版；不能與 `espnow:`、`internal_temperature` 一起用；需要 ESP-IDF framework。
 
 ## 文件
 

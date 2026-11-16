@@ -2,6 +2,7 @@
 
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#include "esphome/core/preferences.h"
 
 #include <cinttypes>
 #include <cstring>
@@ -12,6 +13,13 @@
 #include <esp_event.h>
 #include <esp_netif.h>
 #include <esp_wifi.h>
+
+#ifdef USE_WIFI
+#include "esphome/components/wifi/wifi_component.h"
+#endif
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+#include <driver/usb_serial_jtag.h>
+#endif
 
 namespace esphome {
 namespace ltc_gen {
@@ -42,8 +50,23 @@ void LtcGen::setup() {
   instance_ = this;
   boot_ms_ = millis();
 
+  // timebase defaults from YAML, possibly replaced by synced settings
+  shared_rate_ = rate_;
+  base_origin_ = -(int64_t) llround((double) start_frames_ * ltc_core::frame_period_us(rate_));
+  shared_origin_ = base_origin_;
+  if (settings_enabled_()) load_settings_();
+
 #ifdef USE_WIFI
   own_wifi_ = false;
+  hybrid_ = role_ == Role::NODE && source_ == Source::HOTSPOT;
+  if (hybrid_) {
+    online_ = online_timeout_ms_ > 0;
+    online_until_ms_ = boot_ms_ + online_timeout_ms_;
+    if (!online_) {
+      // straight to low power; ESPHome's wifi may already have started
+      this->set_timeout(100, [this]() { wifi::global_wifi_component->disable(); });
+    }
+  }
 #endif
 
   q_ = xQueueCreate(64, sizeof(Event));
@@ -95,9 +118,6 @@ void LtcGen::setup() {
   }
 
   // --- master timebase ---
-  shared_rate_ = rate_;
-  base_origin_ = -(int64_t) llround((double) start_frames_ * ltc_core::frame_period_us(rate_));
-  shared_origin_ = base_origin_;
   session_ = esp_random();
   if (role_ == Role::MASTER || source_ != Source::ESPNOW) {
     // master: its own clock; hotspot / wifi node: timecode = AP TSF + start_timecode
@@ -144,7 +164,7 @@ void LtcGen::dump_config() {
     if (source_ == Source::HOTSPOT) {
       ESP_LOGCONFIG(TAG, "  Source: phone hotspot '%s'", hotspot_ssid_.c_str());
     } else if (source_ == Source::WIFI) {
-      ESP_LOGCONFIG(TAG, "  Source: TSF of the connected access point");
+      ESP_LOGCONFIG(TAG, "  Source: beacons of the connected access point");
     } else {
       ESP_LOGCONFIG(TAG, "  Source: ESP-NOW master");
     }
@@ -157,6 +177,9 @@ void LtcGen::dump_config() {
     ESP_LOGCONFIG(TAG, "  Temperature compensation: %s", YESNO(temp_comp_));
   }
   ESP_LOGCONFIG(TAG, "  Output offset: %" PRId32 " us", output_offset_us_);
+  if (hybrid_)
+    ESP_LOGCONFIG(TAG, "  Hybrid: online %" PRIu32 " s after boot, %" PRIu32 " s after a change; USB host keeps online: %s",
+                  online_timeout_ms_ / 1000, after_change_ms_ / 1000, YESNO(usb_keeps_online_));
 }
 
 // ---------------------------------------------------------------------------
@@ -179,13 +202,39 @@ void LtcGen::radio_init_() {
   radio_ready_ = true;
 }
 
+// Timing always comes from the AP's beacon timestamps (promiscuous capture),
+// in every mode, so nodes that are online and nodes in low-power mode share
+// exactly the same reference (no beacon-airtime bias between them).
+void LtcGen::start_beacon_capture_() {
+  wifi_promiscuous_filter_t f = {};
+  f.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+  esp_wifi_set_promiscuous_filter(&f);
+  esp_wifi_set_promiscuous_rx_cb(promisc_cb_);
+  esp_wifi_set_promiscuous(true);
+}
+
 void LtcGen::radio_on_() {
-  if (role_ == Role::NODE && source_ == Source::WIFI) {
-    radio_on_flag_ = true;  // the wifi component owns the radio; "on" = sampling TSF
+  if (radio_on_flag_) return;
+  if (role_ == Role::NODE && wifi_phase_()) {
+    // Associated through ESPHome's wifi component: sniff our own AP's beacons
+    // on the current channel. No channel change, connection stays up.
+    wifi_ap_record_t ap;
+    if (esp_wifi_sta_get_ap_info(&ap) != ESP_OK) return;  // not connected: window will fail
+    memcpy(hs_bssid_, ap.bssid, 6);
+    hs_bssid_known_ = true;
+    channel_ = ap.primary;
+    hs_channel_known_ = true;
+    learned_ssid_ = std::string((const char *) ap.ssid);
+    esp_wifi_get_ps(&saved_ps_);
+    esp_wifi_set_ps(WIFI_PS_NONE);  // receive every beacon during the window
+    start_beacon_capture_();
+    radio_on_flag_ = true;
     return;
   }
-  if (!radio_ready_ || radio_on_flag_) return;
-  if (own_wifi_) {
+  if (!radio_ready_) return;
+  bool start_radio = own_wifi_ || hybrid_;
+  if (start_radio) {
+    if (hybrid_) esp_wifi_set_mode(WIFI_MODE_STA);  // ESPHome's wifi is disabled now
     esp_wifi_start();
     esp_wifi_set_ps(WIFI_PS_NONE);
   }
@@ -196,12 +245,10 @@ void LtcGen::radio_on_() {
     } else if (!hs_channel_known_) {
       hs_channel_known_ = hotspot_find_channel_();
     }
-    hs_bssid_known_ = false;  // phones may randomise the BSSID per session
-    wifi_promiscuous_filter_t f = {};
-    f.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
-    esp_wifi_set_promiscuous_filter(&f);
-    esp_wifi_set_promiscuous_rx_cb(promisc_cb_);
-    esp_wifi_set_promiscuous(true);
+    // Phones may randomise the BSSID per hotspot session: match by SSID again,
+    // unless we just learned it while online.
+    if (!keep_bssid_) hs_bssid_known_ = false;
+    start_beacon_capture_();
     esp_wifi_set_channel(channel_, WIFI_SECOND_CHAN_NONE);
     radio_on_flag_ = true;
     return;
@@ -229,19 +276,19 @@ void LtcGen::radio_on_() {
 
 void LtcGen::radio_off_() {
   if (!radio_on_flag_) return;
-  if (role_ == Role::NODE && source_ == Source::WIFI) {
-    radio_on_flag_ = false;
+  radio_on_flag_ = false;
+  if (role_ == Role::NODE && wifi_phase_()) {
+    esp_wifi_set_promiscuous(false);
+    esp_wifi_set_ps(saved_ps_);
     return;
   }
   if (role_ == Role::NODE && source_ == Source::HOTSPOT) {
     esp_wifi_set_promiscuous(false);
-    if (own_wifi_) esp_wifi_stop();
-    radio_on_flag_ = false;
+    if (own_wifi_ || hybrid_) esp_wifi_stop();
     return;
   }
   esp_now_deinit();
   if (own_wifi_) esp_wifi_stop();
-  radio_on_flag_ = false;
 }
 
 bool LtcGen::hotspot_find_channel_() {
@@ -274,6 +321,12 @@ void LtcGen::promisc_cb_(void *buf, wifi_promiscuous_pkt_type_t type) {
   const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *) buf;
   int len = pkt->rx_ctrl.sig_len;
   const uint8_t *p = pkt->payload;
+  if (p[0] == 0xD0) {  // action frame: maybe ESP-NOW settings from an online node
+    const uint8_t *body;
+    int n = ltc_core::espnow_payload(p, len, &body);
+    if (n == (int) sizeof(ltc_core::SettingsPacket)) self->receive_settings_(body);
+    return;
+  }
   if (len < 40 || p[0] != 0x80) return;  // beacon
   const uint8_t *bssid = p + 16;
   if (self->hs_bssid_known_) {
@@ -298,7 +351,12 @@ void LtcGen::promisc_cb_(void *buf, wifi_promiscuous_pkt_type_t type) {
 void LtcGen::recv_cb_(const esp_now_recv_info_t *info, const uint8_t *data, int len) {
   int64_t now = esp_timer_get_time();  // first thing: this is the receive timestamp
   LtcGen *self = instance_;
-  if (self == nullptr || len != (int) sizeof(ltc_core::Beacon)) return;
+  if (self == nullptr) return;
+  if (len == (int) sizeof(ltc_core::SettingsPacket)) {
+    self->receive_settings_(data);
+    return;
+  }
+  if (len != (int) sizeof(ltc_core::Beacon)) return;
   Event e = {};
   e.type = Event::BEACON;
   e.local_us = now;
@@ -392,6 +450,15 @@ void LtcGen::task_() {
         case Event::TEMPERATURE:
           engine_.clock().update_temperature(e.local_us, e.value);
           break;
+        case Event::JAM:
+          if (engine_.clock().valid()) {
+            int64_t o = (int64_t) llround(engine_.clock().to_net(esp_timer_get_time())) + base_origin_;
+            portENTER_CRITICAL(&lock_);
+            jam_origin_ = o;
+            jam_pending_ = true;
+            portEXIT_CRITICAL(&lock_);
+          }
+          break;
         case Event::TIMEBASE:
           engine_.set_timebase((Rate) (int) e.value, e.local_us);
           break;
@@ -466,10 +533,8 @@ void LtcGen::queue_frame_() {
 void LtcGen::loop() {
   uint32_t now = millis();
   if (role_ == Role::NODE) node_schedule_();
-  if (role_ == Role::NODE && source_ == Source::WIFI && radio_on_flag_ && now - last_tsf_ms_ >= 100) {
-    last_tsf_ms_ = now;
-    sample_tsf_();
-  }
+  if (hybrid_) power_manager_();
+  if (settings_enabled_()) settings_loop_();
   if (role_ == Role::MASTER) master_timebase_();
   if (now - last_temp_ms_ >= TEMP_PERIOD_MS) {
     last_temp_ms_ = now;
@@ -528,7 +593,9 @@ void LtcGen::node_schedule_() {
           next_win_ms_ = first_sync_ms_ + CAL_OFFSETS_MS[sched_idx_];
           sched_idx_++;
         } else {
-          next_win_ms_ = resync_ms_ > 0 ? t + resync_ms_ : UINT32_MAX;
+          uint32_t iv = resync_ms_;
+          if (wifi_phase_() && (iv == 0 || iv > 60000)) iv = 60000;  // online: cheap, sync every minute
+          next_win_ms_ = iv > 0 ? t + iv : UINT32_MAX;
         }
       } else if (source_ == Source::HOTSPOT && !hs_channel_known_) {
         // hotspot not found: rescan on the next window
@@ -537,7 +604,8 @@ void LtcGen::node_schedule_() {
         win_state_ = WinState::IDLE;
         break;
       } else if (!ever_synced_) {
-        // no master heard yet: keep listening
+        // nothing heard yet: keep listening (re-arm, e.g. wifi just connected)
+        if (!radio_on_flag_) radio_on_();
         Event e = {};
         e.type = Event::WINDOW_BEGIN;
         post_(e);
@@ -562,19 +630,68 @@ void LtcGen::node_schedule_() {
   }
 }
 
-// Associated station: the TSF timer is disciplined to the AP's beacons by the
-// Wi-Fi hardware. Read it between two local timestamps; discard the pair if
-// we were preempted in between.
-void LtcGen::sample_tsf_() {
-  int64_t t1 = esp_timer_get_time();
-  int64_t tsf = esp_wifi_get_tsf_time(WIFI_IF_STA);
-  int64_t t2 = esp_timer_get_time();
-  if (tsf <= 0 || t2 - t1 > 50) return;
-  Event e = {};
-  e.type = Event::TSF_SAMPLE;
-  e.local_us = (t1 + t2) / 2;
-  e.aux = tsf;
-  post_(e);
+// ---------------------------------------------------------------------------
+// hybrid power management: online (ESPHome wifi: HA, OTA) <-> low power
+// ---------------------------------------------------------------------------
+bool LtcGen::usb_host_connected_() {
+#if SOC_USB_SERIAL_JTAG_SUPPORTED
+  return usb_keeps_online_ && usb_serial_jtag_is_connected();
+#else
+  return false;
+#endif
+}
+
+void LtcGen::power_manager_() {
+  uint32_t now = millis();
+  bool hold = charging_ || ota_active_ || usb_host_connected_();
+  if (online_) {
+    if (hold) {
+      if ((int32_t) (online_until_ms_ - (now + 60000)) < 0) online_until_ms_ = now + 60000;
+      return;
+    }
+    bool can_sleep = ever_synced_ || !hotspot_ssid_.empty();
+    if ((int32_t) (now - online_until_ms_) >= 0 && win_state_ == WinState::IDLE && can_sleep) go_low_power_();
+  } else if ((hold || want_online_) && win_state_ == WinState::IDLE) {
+    want_online_ = false;
+    go_online_(now + 60000);
+  }
+}
+
+void LtcGen::go_low_power_() {
+#ifdef USE_WIFI
+  if (hotspot_ssid_.empty()) hotspot_ssid_ = learned_ssid_;
+  keep_bssid_ = hs_bssid_known_;  // same hotspot session as while online
+  ESP_LOGI(TAG, "Entering low-power mode (hotspot '%s', channel %u)", hotspot_ssid_.c_str(), channel_);
+  espnow_online_stop_();
+  online_ = false;
+  wifi::global_wifi_component->disable();
+  // resync on the normal low-power schedule from now on
+  next_win_ms_ = (millis() - boot_ms_) + (resync_ms_ > 0 ? resync_ms_ : UINT32_MAX / 2);
+#endif
+}
+
+void LtcGen::go_online_(uint32_t until_ms) {
+#ifdef USE_WIFI
+  ESP_LOGI(TAG, "Going online (Wi-Fi, API, OTA)");
+  radio_off_();
+  online_ = true;
+  keep_bssid_ = false;
+  online_until_ms_ = until_ms;
+  wifi::global_wifi_component->enable();
+  next_win_ms_ = (millis() - boot_ms_) + 15000;  // resync once connected
+#endif
+}
+
+void LtcGen::enter_low_power() {
+  if (hybrid_ && online_) online_until_ms_ = millis();
+}
+
+void LtcGen::go_online() {
+  if (!hybrid_) return;
+  if (online_)
+    online_until_ms_ = millis() + online_timeout_ms_;
+  else
+    want_online_ = true;
 }
 
 void LtcGen::master_timebase_() {
@@ -603,6 +720,14 @@ void LtcGen::master_timebase_() {
 }
 
 void LtcGen::jam() {
+  if (settings_enabled_()) {
+    // timecode restarts at start_timecode now, on every node (synced)
+    Event e = {};
+    e.type = Event::JAM;
+    post_(e);
+    settings_changed_();
+    return;
+  }
   if (role_ != Role::MASTER) {
     sync_now();
     return;
@@ -637,8 +762,17 @@ bool LtcGen::set_fps(const std::string &fps) {
     r = Rate::FPS_30;
   else
     return false;
+  if (settings_enabled_()) {
+    if ((uint8_t) r != settings_.rate) {
+      ltc_core::SettingsPacket s = settings_;
+      s.rate = (uint8_t) r;
+      local_change_(s);
+    }
+    settings_changed_();
+    return true;
+  }
   rate_ = r;
-  if (role_ == Role::MASTER || source_ != Source::ESPNOW) {
+  if (role_ == Role::MASTER) {
     portENTER_CRITICAL(&lock_);
     // the origin is a point in time, independent of the rate, so every node
     // that switches to the same fps ends up with the same labels
@@ -651,10 +785,168 @@ bool LtcGen::set_fps(const std::string &fps) {
     e.value = (double) (int) r;
     post_(e);
   }
+  settings_changed_();
   return true;
 }
 
 std::string LtcGen::get_fps() const { return rate_name(rate_); }
+
+// ---------------------------------------------------------------------------
+// settings sync
+// ---------------------------------------------------------------------------
+static const uint32_t SETTINGS_TX_MS = 1000;
+
+void LtcGen::load_settings_() {
+  group_hash_ = fnv1_hash(sync_group_);
+  uint8_t mac[6];
+  get_mac_address_raw(mac);
+  my_id_ = ((uint32_t) mac[2] << 24) | ((uint32_t) mac[3] << 16) | ((uint32_t) mac[4] << 8) | mac[5];
+  settings_ = {};
+  settings_.magic = ltc_core::SETTINGS_MAGIC;
+  settings_.version = ltc_core::SETTINGS_VERSION;
+  settings_.group = group_hash_;
+  settings_.rev = 0;
+  settings_.author = 0;
+  settings_.rate = (uint8_t) rate_;
+  settings_.origin = base_origin_;
+  settings_.resync_ms = resync_ms_;
+  settings_.online_ms = online_timeout_ms_;
+  settings_pref_ = global_preferences->make_preference<ltc_core::SettingsPacket>(fnv1_hash("ltc_gen_settings"));
+  ltc_core::SettingsPacket p;
+  if (settings_pref_.load(&p) && ltc_core::settings_valid(p, group_hash_) && p.rev > 0) {
+    apply_settings_(p, false);
+    ESP_LOGI(TAG, "Restored synced settings rev %" PRIu32 " (fps %s)", p.rev, rate_name((Rate) p.rate));
+  }
+}
+
+void LtcGen::apply_settings_(const ltc_core::SettingsPacket &s, bool save) {
+  bool tb_changed = s.rate != settings_.rate || s.origin != settings_.origin;
+  rate_ = (Rate) s.rate;
+  resync_ms_ = s.resync_ms;
+  online_timeout_ms_ = s.online_ms;
+  portENTER_CRITICAL(&lock_);
+  shared_rate_ = rate_;
+  shared_origin_ = s.origin;
+  portEXIT_CRITICAL(&lock_);
+  settings_ = s;
+  if (save) settings_pref_.save(&settings_);
+  if (tb_changed && q_ != nullptr) {
+    Event e = {};
+    e.type = Event::TIMEBASE;
+    e.local_us = s.origin + output_offset_us_;
+    e.value = (double) (int) rate_;
+    post_(e);
+  }
+}
+
+void LtcGen::local_change_(ltc_core::SettingsPacket s) {
+  s.magic = ltc_core::SETTINGS_MAGIC;
+  s.version = ltc_core::SETTINGS_VERSION;
+  s.group = group_hash_;
+  s.rev = settings_.rev + 1;  // settings_ is always the newest we have seen
+  s.author = my_id_;
+  apply_settings_(s, true);
+  ESP_LOGI(TAG, "Settings changed locally -> rev %" PRIu32 ", broadcasting", s.rev);
+  last_settings_tx_ms_ = 0;  // send right away
+}
+
+void LtcGen::receive_settings_(const uint8_t *body) {
+  ltc_core::SettingsPacket p;
+  memcpy(&p, body, sizeof(p));
+  portENTER_CRITICAL(&lock_);
+  inbox_ = p;
+  inbox_flag_ = true;
+  portEXIT_CRITICAL(&lock_);
+}
+
+void LtcGen::settings_loop_() {
+  // incoming
+  portENTER_CRITICAL(&lock_);
+  bool have = inbox_flag_;
+  ltc_core::SettingsPacket in = inbox_;
+  inbox_flag_ = false;
+  bool jam = jam_pending_;
+  int64_t jo = jam_origin_;
+  jam_pending_ = false;
+  portEXIT_CRITICAL(&lock_);
+  if (have && ltc_core::settings_valid(in, group_hash_) && in.author != my_id_ && ltc_core::settings_newer(in, settings_)) {
+    ESP_LOGI(TAG, "Adopting settings rev %" PRIu32 " from %08" PRIX32 " (fps %s)", in.rev, in.author,
+             rate_name((Rate) in.rate));
+    apply_settings_(in, true);
+  }
+  if (jam) {
+    ltc_core::SettingsPacket s = settings_;
+    s.origin = jo;
+    local_change_(s);
+  }
+  // outgoing: only while online (connected), so low-power nodes never transmit
+#ifdef USE_WIFI
+  bool online = wifi_phase_() && wifi::global_wifi_component->is_connected();
+  if (!online) {
+    espnow_online_stop_();
+    return;
+  }
+  espnow_online_start_();
+  uint32_t now = millis();
+  if (espnow_online_ && (last_settings_tx_ms_ == 0 || now - last_settings_tx_ms_ >= SETTINGS_TX_MS)) {
+    last_settings_tx_ms_ = now;
+    esp_now_send(BROADCAST, (const uint8_t *) &settings_, sizeof(settings_));
+  }
+#endif
+}
+
+void LtcGen::espnow_online_start_() {
+  if (espnow_online_) return;
+  if (esp_now_init() != ESP_OK) return;
+  esp_now_register_recv_cb(recv_cb_);
+  esp_now_peer_info_t peer = {};
+  memcpy(peer.peer_addr, BROADCAST, 6);
+  peer.channel = 0;
+  peer.ifidx = WIFI_IF_STA;
+  peer.encrypt = false;
+  esp_now_add_peer(&peer);
+  espnow_online_ = true;
+}
+
+void LtcGen::espnow_online_stop_() {
+  if (!espnow_online_) return;
+  esp_now_deinit();
+  espnow_online_ = false;
+}
+
+void LtcGen::set_resync_minutes(float m) {
+  if (!settings_enabled_()) {
+    resync_ms_ = (uint32_t) (m * 60000);
+    return;
+  }
+  ltc_core::SettingsPacket s = settings_;
+  s.resync_ms = (uint32_t) (m * 60000);
+  if (s.resync_ms != settings_.resync_ms) local_change_(s);
+  settings_changed_();
+}
+
+void LtcGen::set_online_minutes(float m) {
+  if (!settings_enabled_()) {
+    online_timeout_ms_ = (uint32_t) (m * 60000);
+    return;
+  }
+  ltc_core::SettingsPacket s = settings_;
+  s.online_ms = (uint32_t) (m * 60000);
+  if (s.online_ms != settings_.online_ms) local_change_(s);
+  settings_changed_();
+}
+
+void LtcGen::reset_settings() {
+  if (!settings_enabled_()) return;
+  ltc_core::SettingsPacket s = settings_;
+  s.rev = 0;
+  settings_pref_.save(&s);
+  ESP_LOGI(TAG, "Synced settings cleared; YAML defaults apply after restart");
+}
+
+void LtcGen::settings_changed_() {
+  if (hybrid_ && online_) online_until_ms_ = millis() + after_change_ms_;
+}
 
 void LtcGen::read_temperature_() {
 #if SOC_TEMP_SENSOR_SUPPORTED
@@ -714,7 +1006,10 @@ void LtcGen::publish_() {
     else if (!st.clock_valid)
       s = source_ == Source::ESPNOW ? "waiting for master" : (source_ == Source::WIFI ? "waiting for wifi" : "waiting for hotspot");
     else if (source_ == Source::WIFI)
-      s = synced ? "wifi (TSF)" : "wifi lost, free-run";
+      s = synced ? "online (beacon sync)" : "wifi lost, free-run";
+    else if (hybrid_ && online_)
+      s = synced ? "online, low power in " + to_string((int) ((int32_t) (online_until_ms_ - millis()) / 60000 + 1)) + " min"
+                 : "online, waiting for sync";
     else if (radio_on_flag_)
       s = "syncing";
     else {

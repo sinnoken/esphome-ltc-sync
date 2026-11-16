@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        file: [ltc-node.yaml, ltc-node-online.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml, hotspot-keeper.yaml]
+        file: [ltc-node.yaml, ltc-node-lowpower.yaml, ltc-node-online.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml, hotspot-keeper.yaml]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -137,7 +137,30 @@ static void test_temp_model() {
   CHECK(std::fabs(n.ppm_at(35.0) - (12.5 - 2.0 + 1.0)) < 1e-6, "slope kept");
 }
 
+static void test_settings() {
+  CHECK(sizeof(SettingsPacket) == 36, "settings packet size %d", (int) sizeof(SettingsPacket));
+  SettingsPacket a = {}, b = {};
+  a.rev = 3; a.author = 1;
+  b.rev = 2; b.author = 9;
+  CHECK(settings_newer(a, b) && !settings_newer(b, a), "revision ordering");
+  b.rev = 3;
+  CHECK(settings_newer(b, a) && !settings_newer(a, b), "author tie-break");
+  // raw ESP-NOW action frame
+  uint8_t f[39 + 36 + 4] = {0};
+  f[0] = 0xD0; f[24] = 127; f[25] = 0x18; f[26] = 0xFE; f[27] = 0x34;
+  f[32] = 221; f[33] = 5 + 36; f[34] = 0x18; f[35] = 0xFE; f[36] = 0x34; f[37] = 4; f[38] = 1;
+  a.magic = SETTINGS_MAGIC; a.version = SETTINGS_VERSION; a.group = 77; a.rate = 1;
+  memcpy(f + 39, &a, sizeof a);
+  const uint8_t *body;
+  int n = espnow_payload(f, sizeof f, &body);
+  CHECK(n == 36 && settings_valid(*(const SettingsPacket *) body, 77), "espnow parse");
+  CHECK(!settings_valid(*(const SettingsPacket *) body, 78), "group filter");
+  f[37] = 5;
+  CHECK(espnow_payload(f, sizeof f, &body) < 0, "reject non-espnow vendor frame");
+}
+
 int main() {
+  test_settings();
   test_timecode();
   test_frame_vs_libltc();
   test_biphase();

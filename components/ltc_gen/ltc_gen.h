@@ -47,7 +47,7 @@ enum class Source : uint8_t { HOTSPOT = 0, ESPNOW = 1, WIFI = 2 };
 // Everything the real-time task receives goes through one queue so it can
 // block on a single object.
 struct Event {
-  enum Type : uint8_t { FRAME_DONE, BEACON, TSF_SAMPLE, WINDOW_BEGIN, WINDOW_END, TEMPERATURE, TIMEBASE };
+  enum Type : uint8_t { FRAME_DONE, BEACON, TSF_SAMPLE, WINDOW_BEGIN, WINDOW_END, TEMPERATURE, TIMEBASE, JAM };
   Type type;
   int64_t local_us;
   int64_t aux;  // TSF_SAMPLE: the hotspot's TSF
@@ -111,6 +111,24 @@ class LtcGen : public Component {
   void jam();
   // Node: start a sync window now.
   void sync_now() { sync_now_ = true; }
+  // Hybrid node (hotspot source + wifi component):
+  void enter_low_power();                     // leave Wi-Fi now
+  void go_online();                           // come back online (HA / OTA)
+  void set_charging(bool c) { charging_ = c; }  // e.g. from a VBUS sense pin: stay online while true
+  void set_ota_active(bool a) { ota_active_ = a; }
+  bool is_online() const { return !hybrid_ || online_; }
+  // Synced settings (hotspot / wifi nodes): change on one node, all follow.
+  void set_sync_group(const std::string &g) { sync_group_ = g; }
+  void set_settings_sync(bool v) { settings_sync_ = v; }
+  float get_resync_minutes() const { return resync_ms_ / 60000.0f; }
+  void set_resync_minutes(float m);
+  float get_online_minutes() const { return online_timeout_ms_ / 60000.0f; }
+  void set_online_minutes(float m);
+  uint32_t settings_rev() const { return settings_.rev; }
+  void reset_settings();
+  void set_online_timeout(uint32_t ms) { online_timeout_ms_ = ms; }
+  void set_after_change(uint32_t ms) { after_change_ms_ = ms; }
+  void set_usb_keeps_online(bool v) { usb_keeps_online_ = v; }
   std::string timecode() const;
   bool is_locked() const;
 
@@ -224,8 +242,47 @@ class LtcGen : public Component {
   uint32_t last_publish_ms_{0};
   uint32_t last_temp_ms_{0};
   uint32_t last_save_ms_{0};
-  uint32_t last_tsf_ms_{0};
-  void sample_tsf_();
+  // hybrid mode (hotspot source + ESPHome wifi component)
+  void power_manager_();
+  void go_low_power_();
+  void go_online_(uint32_t until_ms);
+  bool usb_host_connected_();
+  void settings_changed_();
+  void start_beacon_capture_();
+  bool wifi_phase_() const { return source_ == Source::WIFI || (hybrid_ && online_); }
+  bool hybrid_{false};
+  bool online_{false};
+  bool want_online_{false};
+  bool keep_bssid_{false};
+  bool charging_{false};
+  bool ota_active_{false};
+  uint32_t online_until_ms_{0};
+  uint32_t online_timeout_ms_{1800000};
+  uint32_t after_change_ms_{120000};
+  bool usb_keeps_online_{true};
+  std::string learned_ssid_;
+  wifi_ps_type_t saved_ps_{WIFI_PS_NONE};
+  // settings sync
+  bool settings_enabled_() const { return settings_sync_ && role_ == Role::NODE && source_ != Source::ESPNOW; }
+  void load_settings_();
+  void apply_settings_(const ltc_core::SettingsPacket &s, bool save);
+  void local_change_(ltc_core::SettingsPacket s);
+  void receive_settings_(const uint8_t *body);
+  void settings_loop_();
+  void espnow_online_start_();
+  void espnow_online_stop_();
+  bool settings_sync_{true};
+  std::string sync_group_{"ltc"};
+  uint32_t group_hash_{0};
+  uint32_t my_id_{0};
+  ltc_core::SettingsPacket settings_{};
+  ltc_core::SettingsPacket inbox_{};
+  bool inbox_flag_{false};
+  bool jam_pending_{false};
+  int64_t jam_origin_{0};
+  bool espnow_online_{false};
+  uint32_t last_settings_tx_ms_{0};
+  ESPPreferenceObject settings_pref_;
   ESPPreferenceObject pref_;
 
   static LtcGen *instance_;

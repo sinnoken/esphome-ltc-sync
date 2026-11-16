@@ -1,0 +1,91 @@
+# ESPHome LTC timecode node - pure low-power edition (~16 mA), no Wi-Fi at all.
+# (The default ltc-node.yaml is the hybrid edition: online for setup/OTA,
+#  then this same low-power behaviour.)
+# No Wi-Fi connection: the radio is only switched on for short sync windows
+# in which the node passively listens to the beacons of a phone hotspot (it
+# never connects and never transmits).
+#
+# Configuration: edit the substitutions below - that is all. Every node uses
+# this same file (the name gets a MAC suffix), so build once and flash the
+# same firmware to all nodes over USB (ESPHome dashboard: Install -> Manual
+# download -> Factory format, then web.esphome.io). No HA / OTA on purpose.
+# Hardware: Seeed XIAO ESP32C3, LTC on D3 -> attenuator -> camera input.
+
+substitutions:
+  # Identity
+  name: "ltc-node-lp"
+  friendly_name: "LTC Node"
+  device_description: "Wireless SMPTE LTC timecode generator (low power)"
+  project_name: "esphome-ltc-sync.ltc-node-lowpower"
+  project_version: "v0.1.0"
+  ltc_source: "github://your-github-user/esphome-ltc-sync@main"
+  # Time reference
+  hotspot_ssid: "My iPhone"     # 2.4 GHz! iPhone: "Maximize Compatibility"
+  resync_interval: "10min"      # 0s = calibrate at boot (+1, +5, +15 min) then free-run
+  # Timecode
+  fps: "25"
+  start_timecode: "00:00:00:00"
+  output_offset_us: "0"
+  # Hardware (Seeed XIAO ESP32C3)
+  ltc_pin: GPIO5
+  led_pin: GPIO4
+  # Logging
+  log_level: DEBUG
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  comment: "${device_description}"
+  name_add_mac_suffix: true
+  min_version: 2026.10.0
+  project:
+    name: "${project_name}"
+    version: "${project_version}"
+
+esp32:
+  board: seeed_xiao_esp32c3
+  cpu_frequency: 80MHZ
+  framework:
+    type: esp-idf
+
+external_components:
+  - source: ${ltc_source}
+    components: [ltc_gen]
+
+preferences:
+  flash_write_interval: 5min
+
+logger:
+  level: ${log_level}
+
+ltc_gen:
+  id: ltc
+  role: node
+  source: hotspot
+  hotspot_ssid: "${hotspot_ssid}"
+  pin: ${ltc_pin}
+  fps: "${fps}"
+  start_timecode: "${start_timecode}"
+  output_offset_us: ${output_offset_us}
+  resync_interval: ${resync_interval}
+  timecode:
+    name: "Timecode"
+  sync_state:
+    name: "Sync State"
+  locked:
+    name: "Locked"
+    on_press:
+      - output.turn_on: lock_led
+    on_release:
+      - output.turn_off: lock_led
+  ppm:
+    name: "Clock Error"
+  sync_error:
+    name: "Sync Error"
+  temperature:
+    name: "Chip Temperature"
+
+output:
+  - platform: gpio
+    pin: ${led_pin}
+    id: lock_led
