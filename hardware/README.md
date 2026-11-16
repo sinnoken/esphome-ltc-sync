@@ -17,9 +17,11 @@
 | `pcb/out/preview_top.png`、`preview_bottom.png` | 板子正反面預覽 |
 | `pcb/out/drc_report.txt` | 設計檢查結果（間距 ≥ 0.2 mm、每條線路連通） |
 | `enclosure/ltc_node_enclosure.py` | 產生外殼的程式 |
-| `enclosure/out/base.stl`、`lid.stl`、`enclosure.3mf` | 3D 列印檔（3MF 已排好列印方向） |
+| `enclosure/out/base.step`、`lid.step` | **STEP 實體檔**：可在 Fusion 360、FreeCAD、Onshape 編輯，也能直接上傳 JLC3DP |
+| `enclosure/out/base.stl`、`lid.stl` | STL 網格（JLC3DP 建議的上傳格式，任何切片軟體都能開） |
+| `enclosure/out/enclosure.3mf` | 兩件排好列印方向，給自己的 3D 印表機用 |
 
-重新產生：`pip install shapely matplotlib gerbonara manifold3d trimesh`，然後執行兩支 `.py`。
+重新產生：`pip install shapely matplotlib gerbonara build123d trimesh`，然後執行兩支 `.py`。外殼用 build123d（OpenCascade 核心）建出實體，所以能輸出 STEP。
 
 ## 電路
 
@@ -62,11 +64,12 @@
 
 - 尺寸約 57 × 41 × 17 mm（不含冷靴腳）。上下兩件，在插座和 USB-C 的中心線分開，所以 PCB 可以直接放進底座。
 - 疊法：底座 → 電池（底面貼一層 0.5 mm 泡棉膠）→ PCB → 上蓋。上蓋的四根柱子會插進 PCB 的四個孔，把 PCB 壓在電池上。
-- 4 顆 **M2 × 10 自攻螺絲**從上蓋鎖進底座角柱。
+- 4 顆 **M2 × 10 自攻螺絲**從上蓋鎖進底座角柱（螺絲頭露在上蓋表面；若做沉頭孔，角落牆會薄於 0.8 mm）。
 - 上蓋：LED 透光孔（剪一段 1.75 mm 透明線材插進去當導光柱）、開關撥桿槽。
 - 天線 FPC 貼在上蓋內側。
 - 底部是標準冷靴腳，可以插相機熱靴。
-- 列印：PETG，0.2 mm 層高，底座開口朝上，上蓋頂面朝下，不需要支撐。
+- 自己印：PETG，0.2 mm 層高，底座開口朝上，上蓋頂面朝下，不需要支撐。
+- **JLC3DP 代印**：上傳 `base.stl`、`lid.stl`（或 STEP）。主要牆厚 2 mm，最薄處（USB 和插座外側凹槽）0.8 mm，符合 JLC3DP「牆厚 > 1.2 mm、最薄 ≥ 0.8 mm」的要求。材料選尼龍或樹脂皆可；要鎖自攻螺絲的話，尼龍比較不容易裂。
 
 ## 下單前的檢查清單
 

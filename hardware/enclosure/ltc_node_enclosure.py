@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """3D-printable enclosure for the LTC node carrier board (hardware/pcb).
 
-    pip install manifold3d trimesh numpy matplotlib
+    pip install build123d trimesh numpy matplotlib
     python3 hardware/enclosure/ltc_node_enclosure.py
 
-Outputs (hardware/enclosure/out/): base.stl, lid.stl, enclosure.3mf (both
-parts, print layout), preview.png.
+Outputs (hardware/enclosure/out/):
+    base.step, lid.step   exact solids (B-rep): edit in Fusion 360 / FreeCAD /
+                          Onshape, or upload to JLC3DP / any print service
+    base.stl, lid.stl     meshes (JLC3DP's recommended upload format)
+    enclosure.3mf         both parts laid out for a home printer
+    preview.png
 
 Stack-up (z = top of the base floor):
     0.0 ... 6.0   LiPo 503450 (50 x 34 x 5 mm) + 0.5 mm foam tape
@@ -14,15 +18,16 @@ Stack-up (z = top of the base floor):
 The halves split at z = 10.1, the centre line of the 3.5 mm jacks and the
 USB-C receptacle, so every side opening is cut half in the base, half in the
 lid and the PCB drops straight in. Four M2 x 10 self-tapping screws go through
-the lid corners into the base bosses. A standard cold-shoe foot is under the
-base. Print both parts in PETG, flat side down, no supports needed except
-for the cold-shoe foot overhang (0.6 mm, usually fine without).
+the lid corners into the base bosses (heads sit on the lid). A standard
+cold-shoe foot is under the base. Every wall is >= 0.8 mm (JLC3DP: walls
+> 1.2 mm, thinnest part >= 0.8 mm; main walls here are 2 mm). Home printing:
+PETG, base open side up, lid roof down, no supports.
 """
 
 from pathlib import Path
 
 import numpy as np
-from manifold3d import CrossSection, JoinType, Manifold
+from build123d import Align, Box, Cylinder, Pos, RectangleRounded, Rot, export_step, export_stl, extrude
 
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
@@ -54,42 +59,43 @@ BOSS_R = 2.1
 PILOT_D, CLEAR_D, HEAD_D = 1.6, 2.3, 4.0
 
 
-def rrect(x0, y0, x1, y1, r):
-    cs = CrossSection.square([x1 - x0 - 2 * r, y1 - y0 - 2 * r]).translate([x0 + r, y0 + r])
-    return cs.offset(r, JoinType.Round, circular_segments=SEG)
+MIN3 = (Align.MIN, Align.MIN, Align.MIN)
+CTR_MIN = (Align.CENTER, Align.CENTER, Align.MIN)
 
 
-def prism(cs, z0, z1):
-    return Manifold.extrude(cs, z1 - z0).translate([0, 0, z0])
+def prism_rrect(x0, y0, x1, y1, r, z0, z1):
+    sk = RectangleRounded(x1 - x0, y1 - y0, r)
+    return Pos((x0 + x1) / 2, (y0 + y1) / 2, z0) * extrude(sk, amount=z1 - z0)
 
 
 def box(x0, y0, z0, x1, y1, z1):
-    return Manifold.cube([x1 - x0, y1 - y0, z1 - z0]).translate([x0, y0, z0])
+    return Pos(x0, y0, z0) * Box(x1 - x0, y1 - y0, z1 - z0, align=MIN3)
 
 
 def cyl(x, y, z0, z1, r):
-    return Manifold.cylinder(z1 - z0, r, r, SEG).translate([x, y, z0])
+    return Pos(x, y, z0) * Cylinder(r, z1 - z0, align=CTR_MIN)
 
 
 def xcyl(y, z, x0, x1, r):
-    """cylinder along x"""
-    return Manifold.cylinder(x1 - x0, r, r, SEG).rotate([0, 90, 0]).translate([x0, y, z])
+    """cylinder along +x"""
+    return Pos(x0, y, z) * Rot(0, 90, 0) * Cylinder(r, x1 - x0, align=CTR_MIN)
 
 
 def openings():
     """Side openings, centred on the split plane."""
-    cut = Manifold()
+    cut = None
     for y in JACK_Y:
-        cut += xcyl(y, Z_SPLIT, OX0 - 1, X0 + 0.5, 3.25)                     # plug hole
-        cut += xcyl(y, Z_SPLIT, OX0 - 1, OX0 + 1.2, 4.2)                     # counterbore for the plug collar
+        c = (xcyl(y, Z_SPLIT, OX0 - 1, X0 + 0.5, 3.25)        # plug hole
+             + xcyl(y, Z_SPLIT, OX0 - 1, OX0 + 1.2, 4.2))     # counterbore for the plug collar
+        cut = c if cut is None else cut + c
     cut += box(X1 - 0.5, USB_Y - 4.75, Z_SPLIT - 2.0, OX1 + 1, USB_Y + 4.75, Z_SPLIT + 2.0)       # USB-C
-    cut += box(OX1 - 1.5, USB_Y - 6.5, Z_SPLIT - 3.5, OX1 + 1, USB_Y + 6.5, Z_SPLIT + 3.5)        # cable overmold
+    cut += box(OX1 - 1.2, USB_Y - 6.5, Z_SPLIT - 3.5, OX1 + 1, USB_Y + 6.5, Z_SPLIT + 3.5)        # cable overmold (0.8 mm wall left)
     return cut
 
 
 def base():
-    outer = prism(rrect(OX0, OY0, OX1, OY1, OUTER_R), -FLOOR, Z_SPLIT)
-    cavity = prism(rrect(X0, Y0, X1, Y1, 1.0), 0, Z_SPLIT + 1)
+    outer = prism_rrect(OX0, OY0, OX1, OY1, OUTER_R, -FLOOR, Z_SPLIT)
+    cavity = prism_rrect(X0, Y0, X1, Y1, 1.0, 0, Z_SPLIT + 1)
     b = outer - cavity
     for x, y in BOSSES:
         b += cyl(x, y, 0, Z_SPLIT, BOSS_R)
@@ -104,13 +110,13 @@ def base():
 
 
 def lid():
-    outer = prism(rrect(OX0, OY0, OX1, OY1, OUTER_R), Z_SPLIT, Z_CEILING + ROOF)
-    cavity = prism(rrect(X0, Y0, X1, Y1, 1.0), Z_SPLIT - 1, Z_CEILING)
+    outer = prism_rrect(OX0, OY0, OX1, OY1, OUTER_R, Z_SPLIT, Z_CEILING + ROOF)
+    cavity = prism_rrect(X0, Y0, X1, Y1, 1.0, Z_SPLIT - 1, Z_CEILING)
     l = outer - cavity
     for x, y in BOSSES:
         l += cyl(x, y, Z_SPLIT, Z_CEILING, BOSS_R)
         l -= cyl(x, y, Z_SPLIT - 1, Z_CEILING + ROOF + 1, CLEAR_D / 2)
-        l -= cyl(x, y, Z_CEILING + ROOF - 1.4, Z_CEILING + ROOF + 1, HEAD_D / 2)   # screw head
+        # no head counterbore: it would leave < 0.8 mm wall at the corners
     # posts that press the PCB onto the battery, with pins into the PCB holes
     for x, y in PCB_HOLES:
         l += cyl(x, y, Z_PCB_TOP + 0.2, Z_CEILING + 0.01, 1.7)
@@ -123,11 +129,11 @@ def lid():
     return l
 
 
-def to_trimesh(m):
+def to_trimesh(part, path):
     import trimesh
 
-    mesh = m.to_mesh()
-    return trimesh.Trimesh(vertices=np.asarray(mesh.vert_properties)[:, :3], faces=np.asarray(mesh.tri_verts), process=True)
+    export_stl(part, str(path), tolerance=0.01, angular_tolerance=0.1)
+    return trimesh.load(str(path))
 
 
 def main():
@@ -135,25 +141,24 @@ def main():
 
     OUT.mkdir(parents=True, exist_ok=True)
     b, l = base(), lid()
-    for name, m in (("base", b), ("lid", l)):
-        assert m.status().name == "NoError", m.status()
-        t = to_trimesh(m)
+    meshes = {}
+    for name, part in (("base", b), ("lid", l)):
+        assert part.is_valid, f"{name}: invalid solid"
+        export_step(part, str(OUT / f"{name}.step"))
+        t = to_trimesh(part, OUT / f"{name}.stl")
         assert t.is_watertight, f"{name} is not watertight"
-        t.export(OUT / f"{name}.stl")
-        print(f"{name}: {t.bounds[1] - t.bounds[0]} mm, volume {t.volume / 1000:.1f} cm3, watertight")
+        print(f"{name}: {np.round(t.bounds[1] - t.bounds[0], 2)} mm, volume {part.volume / 1000:.1f} cm3, "
+              f"watertight, STEP + STL")
+        meshes[name] = t
     # print layout: base upright, lid flipped (roof on the bed), side by side
-    tb = to_trimesh(b)
+    tb = meshes["base"].copy()
     tb.apply_translation([0, 0, -tb.bounds[0][2]])
-    tl = to_trimesh(l)
+    tl = meshes["lid"].copy()
     tl.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0]))
     tl.apply_translation([0, 0, -tl.bounds[0][2]])
     tl.apply_translation([tb.bounds[1][0] - tl.bounds[0][0] + 8, tb.bounds[0][1] - tl.bounds[0][1], 0])
-    scene = trimesh.Scene({"base": tb, "lid": tl})
-    try:
-        scene.export(OUT / "enclosure.3mf")
-    except Exception as e:  # 3MF export needs optional deps
-        print("3mf export skipped:", e)
-    render(b, l)
+    trimesh.Scene({"base": tb, "lid": tl}).export(OUT / "enclosure.3mf")
+    render(meshes["base"], meshes["lid"])
 
 
 def render(b, l):
@@ -176,10 +181,9 @@ def render(b, l):
         light = np.array([0.3, -0.4, 0.85])
         light /= np.linalg.norm(light)
         for m, color, dz in items:
-            mesh = m.to_mesh()
-            v = np.asarray(mesh.vert_properties)[:, :3].copy()
+            v = np.asarray(m.vertices).copy()
             v[:, 2] += dz
-            f = np.asarray(mesh.tri_verts)
+            f = np.asarray(m.faces)
             tri = v[f]
             n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
             n /= np.linalg.norm(n, axis=1)[:, None] + 1e-12
