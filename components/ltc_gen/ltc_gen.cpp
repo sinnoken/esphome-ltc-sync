@@ -237,7 +237,9 @@ bool LtcGen::hotspot_find_channel_() {
   wifi_scan_config_t sc = {};
   sc.ssid = (uint8_t *) hotspot_ssid_.c_str();
   sc.show_hidden = false;
-  sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+  // Passive: the node never transmits (no RF bursts next to the audio path).
+  sc.scan_type = WIFI_SCAN_TYPE_PASSIVE;
+  sc.scan_time.passive = 150;  // > one beacon interval (102.4 ms) per channel
   if (esp_wifi_scan_start(&sc, true) != ESP_OK) return false;
   uint16_t n = 1;
   wifi_ap_record_t rec;
