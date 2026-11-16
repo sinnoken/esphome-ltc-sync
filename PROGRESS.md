@@ -52,6 +52,9 @@
 - [ ] 鎖定 LED 改成閃燈（常亮估計 1–3 mA）。
 - [ ] 可選的動態降頻（`power_management:`，RMT 改用 XTAL 時脈，閒置時 40 MHz、關 PLL），預設關閉，實測後再決定。
 - [ ] 根據實測決定 `resync_interval` 預設值，以及是否需要外接 TCXO 選項。
+- [ ] 混合版「沒人用就早點下線」：開機後幾分鐘內沒有 HA / 網頁連進來就直接進省電模式；有人改設定或 OTA 才撐滿 `online_timeout`（目前每次開機約多花十幾 mAh，估計值）。
+- [ ] 無線電依需要開：對時視窗收到足夠 beacon 且離散度夠小就提早結束（現在固定 3 秒）；對時間隔依溫度調整（溫度穩定就拉長，溫度變化超過門檻就提早對時）。
+- [ ] 低電量保護：電池電壓低於約 3.3 V 停止 LTC 輸出並進深度睡眠，之前先在 HA 發低電量警告（保護 LiPo，也避免低電壓時波形不穩）。
 - [ ] **熱點模式的 time-of-day timecode（free-run 慣例）**：LTC 數字要等於當天時刻。設計草案：
   - 時間來源沿用 ESPHome 的 `time:` 元件（`platform: sntp` 或 `homeassistant`），把現有的 `time_id`（目前 master 專用）開放給 node；在 `on_time_sync` 時用 `gettimeofday()` 的 µs 值配對當下的 TSF。
   - 上線中的 node 用這個時間求出 `TOD = a + b·TSF`，經 ESP-NOW 設定同步分享給所有 node（含純省電版）；各台用同一組換算值，所以彼此對齊精度仍來自 TSF。
