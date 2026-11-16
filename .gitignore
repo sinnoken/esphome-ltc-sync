@@ -1,0 +1,6 @@
+test/build/
+test/libltc
+examples/.esphome/
+examples/secrets.yaml
+__pycache__/
+*.wav

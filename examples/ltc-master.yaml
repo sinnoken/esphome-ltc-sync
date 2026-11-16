@@ -1,0 +1,39 @@
+# LTC master, stand-alone (no router needed). Keep it powered: it sends the
+# ESP-NOW beacons every 100 ms and can also output LTC itself.
+substitutions:
+  name: ltc-master
+
+esphome:
+  name: ${name}
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+ltc_gen:
+  id: ltc
+  role: master
+  pin: GPIO26
+  fps: "25"
+  channel: 1
+  start_timecode: "01:00:00:00"   # timecode at master boot (no clock available)
+  timecode:
+    name: "Master timecode"
+
+# Button: re-jam (restart the timecode at start_timecode)
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO37
+      inverted: true
+    name: "Jam"
+    on_press:
+      - lambda: id(ltc).jam();

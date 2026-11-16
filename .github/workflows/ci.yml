@@ -1,0 +1,25 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install numpy
+      - run: cd test && make libltc && make test
+  esphome:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        file: [ltc-node.yaml, ltc-node-espnow.yaml, ltc-master.yaml, ltc-master-wifi.yaml]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install esphome
+      - run: |
+          cd examples
+          printf 'wifi_ssid: "ci"\nwifi_password: "ci123456"\n' > secrets.yaml
+          esphome compile ${{ matrix.file }}
