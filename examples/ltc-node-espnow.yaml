@@ -22,7 +22,7 @@ external_components:
       type: local
       path: ../components
     # or, once pushed to GitHub:
-    # source: github://<you>/esphome-ltc-sync
+    # source: github://sinnoken/esphome-ltc-sync
 
 ltc_gen:
   id: ltc

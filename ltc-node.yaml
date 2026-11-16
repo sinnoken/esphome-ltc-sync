@@ -22,7 +22,7 @@ substitutions:
   device_description: "Wireless SMPTE LTC timecode generator"
   project_name: "esphome-ltc-sync.ltc-node"
   project_version: "v0.2.0"
-  ltc_source: "github://your-github-user/esphome-ltc-sync@main"
+  ltc_source: "github://sinnoken/esphome-ltc-sync@main"
   # Power
   online_timeout: "30min"       # stay online this long after power-on
   online_after_change: "2min"   # ... or go to low power this long after a setting change
@@ -96,7 +96,7 @@ captive_portal:
 improv_serial:
 
 dashboard_import:
-  package_import_url: github://your-github-user/esphome-ltc-sync/ltc-node.yaml@main
+  package_import_url: github://sinnoken/esphome-ltc-sync/ltc-node.yaml@main
   import_full_config: false
 
 ltc_gen:

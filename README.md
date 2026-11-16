@@ -100,7 +100,7 @@ repo 根目錄有三份「產品 YAML」，可調的東西都集中在最上面�
 
 ### 燒錄
 
-1. 改 `ltc-node.yaml` 最上面的 `substitutions`（至少把 `ltc_source` 換成你的 GitHub 帳號）。
+1. 改 `ltc-node.yaml` 最上面的 `substitutions`（元件會從 `github://sinnoken/esphome-ltc-sync` 下載）。
 2. 第一次用 USB：ESPHome Dashboard *Install → Manual download → Factory format*，到 [web.esphome.io](https://web.esphome.io) 每顆燒同一個 `.bin`；或 `esphome run ltc-node.yaml`。
 3. 之後混合版可以在上線期間 OTA；純省電版只能用 USB。
 
@@ -118,7 +118,7 @@ repo 根目錄有三份「產品 YAML」，可調的東西都集中在最上面�
 
 ```yaml
 external_components:
-  - source: github://<你的帳號>/esphome-ltc-sync
+  - source: github://sinnoken/esphome-ltc-sync
     components: [ltc_gen]
 
 esp32:

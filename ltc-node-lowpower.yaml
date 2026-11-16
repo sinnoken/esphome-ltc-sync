@@ -18,7 +18,7 @@ substitutions:
   device_description: "Wireless SMPTE LTC timecode generator (low power)"
   project_name: "esphome-ltc-sync.ltc-node-lowpower"
   project_version: "v0.2.0"
-  ltc_source: "github://your-github-user/esphome-ltc-sync@main"
+  ltc_source: "github://sinnoken/esphome-ltc-sync@main"
   # Time reference
   hotspot_ssid: "My iPhone"     # 2.4 GHz! iPhone: "Maximize Compatibility"
   resync_interval: "10min"      # 0s = calibrate at boot (+1, +5, +15 min) then free-run

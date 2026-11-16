@@ -13,7 +13,7 @@ substitutions:
   device_description: "Wireless SMPTE LTC timecode generator"
   project_name: "esphome-ltc-sync.ltc-node-online"
   project_version: "v0.2.0"
-  ltc_source: "github://your-github-user/esphome-ltc-sync@main"
+  ltc_source: "github://sinnoken/esphome-ltc-sync@main"
   # Timecode
   fps: "25"                     # 24, 25, 29.97df, 30 (also selectable in HA)
   start_timecode: "00:00:00:00" # timecode at TSF 0 of the access point
@@ -76,7 +76,7 @@ captive_portal:
 improv_serial:
 
 dashboard_import:
-  package_import_url: github://your-github-user/esphome-ltc-sync/ltc-node-online.yaml@main
+  package_import_url: github://sinnoken/esphome-ltc-sync/ltc-node-online.yaml@main
   import_full_config: false
 
 ltc_gen:
