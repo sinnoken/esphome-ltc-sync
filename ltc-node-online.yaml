@@ -12,7 +12,7 @@ substitutions:
   friendly_name: "LTC Node Online"
   device_description: "Wireless SMPTE LTC timecode generator"
   project_name: "esphome-ltc-sync.ltc-node-online"
-  project_version: "v0.1.0"
+  project_version: "v0.2.0"
   ltc_source: "github://your-github-user/esphome-ltc-sync@main"
   # Timecode
   fps: "25"                     # 24, 25, 29.97df, 30 (also selectable in HA)

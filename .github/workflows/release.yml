@@ -1,0 +1,41 @@
+# Push a tag like v0.2.0 -> GitHub builds every product YAML and attaches the
+# firmware to a GitHub release (factory .bin for web.esphome.io, ota .bin for OTA).
+name: Release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        file: [ltc-node, ltc-node-lowpower, ltc-node-online]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install esphome
+      - run: esphome -s ltc_source components compile ${{ matrix.file }}.yaml
+      - run: |
+          mkdir -p out
+          b=$(ls -d .esphome/build/*/build | head -1)
+          cp "$b/firmware.factory.bin" "out/${{ matrix.file }}-${{ github.ref_name }}.factory.bin"
+          cp "$b/firmware.ota.bin" "out/${{ matrix.file }}-${{ github.ref_name }}.ota.bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: out/*.bin
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist }
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*.bin
+          body_path: CHANGELOG.md
