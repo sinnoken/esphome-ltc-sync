@@ -55,7 +55,8 @@
   - 要實測：幀結束 ISR 時間戳的額外抖動（切頻時中斷延遲最多約 40 µs）對相位控制的影響；ESPHome 其他元件是否會持有鎖。
   - 預期（估計）：約 15 mA → 9–11 mA。
   - 同一輪一起比較：`min_freq_mhz` 40 / 20 / 10 MHz（C3 允許 XTAL 整數除頻；RMT 用 XTAL、溫度感測器用 XTAL/RC，不受影響）。
-  - 檢查有沒有不必要的周邊時脈開著（規格書：80 MHz 閒置時周邊時脈全關 13 mA、全開 18 mA）。
+  - 檢查有沒有不必要的周邊時脈開著（規格書：80 MHz 閒置時周邊時脈全關 13 mA、全開 18 mA）。已查過產生的程式碼（2026-11-16）：省電版只啟用 logger（USB-Serial-JTAG）、preferences、ltc_gen、LED（GPIO）、電池 ADC（每 60 s）；ltc_gen 用 RMT、溫度感測器、Wi-Fi（視窗外 `esp_wifi_stop`）。沒有 UART / I2C / SPI / BLE。實機上再加一行診斷 log，進入省電模式時印出 `SYSTEM_PERIP_CLK_EN0/EN1` 和 Wi-Fi 時脈暫存器確認。
+  - 可省的小項：溫度感測器只在讀值時 enable（現在常開，每 5 s 讀一次）；FreeRTOS tick 1000 Hz 在 10 MHz 時佔比會變大，可評估調低或 tickless。
   - 每幀路徑（RMT ISR、幀編碼）放 IRAM，避免閒置時還去讀 flash（規格書註明讀 flash 會增加耗電）。
 - [ ] 根據實測決定 `resync_interval` 預設值，以及是否需要外接 TCXO 選項。
 - [ ] 混合版「沒人用就早點下線」：開機後幾分鐘內沒有 HA / 網頁連進來就直接進省電模式；有人改設定或 OTA 才撐滿 `online_timeout`（目前每次開機約多花十幾 mAh，估計值）。
