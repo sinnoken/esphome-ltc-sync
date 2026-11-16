@@ -172,6 +172,7 @@ Lambda API：`set_fps("25")`、`jam()`、`sync_now()`、`set_resync_minutes(x)`�
 - [docs/hardware.md](docs/hardware.md)：板子、電池、接線與電平
 - [docs/accuracy.md](docs/accuracy.md)：原理、誤差來源、模擬假設與結果
 - [docs/verify.md](docs/verify.md)：上線前的實測步驟（`ltc_compare.py`）
+- [PROGRESS.md](PROGRESS.md)：目前進度、功能測試清單、待辦與設計決策
 
 ## 開發
 
